@@ -1,113 +1,111 @@
-# 与你之歌 (ST-Manager)
+# 与你之歌（ST-Manager）安全加固版
 
-**作者**: 贝露凛倾  
-**版本**: v1.0
+ST-Manager 是面向 Android Termux 的 SillyTavern 与 gcli2api 部署、启动、停止、更新和备份工具。
 
-## 📖 项目简介
+- 原作者：贝露凛倾
+- 安全加固维护：Kiro-Durandal Fork
+- 版本：v1.1
 
-本项目是一个专为 Android Termux 环境设计的 **SillyTavern (酒馆)** 和 **gcli2api (逆向 API)** 一键部署与管理工具。
+> 仅供学习与研究。使用者应自行遵守相关服务条款、账号政策和当地法律。
 
-**主要目的**:
+## 安装
 
-* 为 AI 模型微调的学术交流提供便捷环境。
-* 简化 Termux 上复杂的环境配置和依赖安装过程。
-* 提供图形化菜单，方便管理服务的启动、停止、更新和日志查看。
-
-> **⚠️ 免责声明**:
->
-> * 本项目仅供学习和学术交流，无其他目的。
-> * 免费开源，禁止商用。二改需授权。
-> * 禁止用于商业传播，仅限 AI 模型研究者交流。
-> * 禁止利用该脚本进行违反当地法律的事情。
-
-## 🚀 快速开始 (使用方法)
-
-在 Termux 中复制并运行以下命令即可一键安装：
+安全加固改动尚未进入 Fork 的 `main` 时，请解压交付的 ZIP，进入解压目录后直接运行其中的本地安装器：
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/beilusaiying/ST-beilu-Rapid_deployment/main/ST-Manager/install.sh)
+cd "/你解压到的目录" || exit 1
+bash ST-Manager/install.sh
 ```
 
-安装完成后，输入以下命令启动管理菜单：
+安装器会优先使用同目录下已经下载、可以审阅的文件，不会再从尚未更新的 `main` 拉取旧版。
+
+安全加固改动合并到 Fork 的 `main` 后，可使用：
+
+```bash
+cd "$HOME" || exit 1
+git clone --depth 1 https://github.com/Kiro-Durandal/ST-beilu-Rapid_deployment.git st-manager-source
+bash "$HOME/st-manager-source/ST-Manager/install.sh"
+```
+
+安装完成后运行：
 
 ```bash
 st-menu
 ```
 
-## 📂 项目结构
+安装器只支持 Termux。它仅安装缺失的软件包，不会为了“修复环境”把现有 Node.js 强制替换为 `nodejs-lts`，也不会自动安装全局 PM2。系统已经存在 PM2 时会使用它，否则使用带所有权校验的 PID 文件管理进程。
 
-本项目采用模块化设计，便于扩展和维护：
+## 本 Fork 的安全改动
+
+### gcli2api
+
+- 强制通过环境变量监听 `127.0.0.1:7861`，不再暴露到同一 Wi-Fi、热点或 VPN 网络。
+- 首次安装生成独立的 48 位十六进制 API 密码和面板密码，不再使用默认 `pwd`。
+- 密码保存到 `~/.config/st-manager/gcli2api.env`，权限设为 `600`；配置文件按白名单解析，不使用 `source`。
+- 固定到已审核提交 `cdbaf37003a92de31b8a02512d43df3ed6de3411`。
+- 安装前核对提交 ID，并对 `web.py` 和 `requirements-termux.txt` 做 SHA-256 校验；失败时拒绝安装。
+- 不再下载并直接执行上游 `master/termux-install.sh`，因此不会替用户改写 Termux 软件源，也不会执行上游的远程硬重置和自动启动逻辑。
+- 更新前完整保留旧目录；凭据目录会复制到新版本。
+
+> Python 包仍由 PyPI/配置的软件源安装。上游 `requirements-termux.txt` 没有为全部传递依赖提供哈希，因此这部分供应链风险只能降低，不能完全消除。
+
+### ST-Manager
+
+- 自更新直接从本 Fork 下载新副本，先执行全部 Shell 语法检查，再备份并替换；不依赖安装目录中的 `.git`。
+- 设置文件不再被 `source` 执行。代理地址仅接受 `http`、`https`、`socks5` 或 `socks5h` 的 `主机:端口` 格式。
+- 安装和自更新会把旧版本保存在 `~/ST-Manager-backups/`，失败时尝试自动恢复。
+- `.bashrc` 自启动使用明确的标记块，只追加一次，不清空、不重写用户原有内容。
+- 进程停止前同时核对 PM2 名称、工作目录或 PID、`/proc` 工作目录和命令行，不再使用宽泛的 `pkill -f`。
+
+### SillyTavern
+
+- 保持官方 `release` 分支为默认安装来源。
+- 常规更新使用 `git pull --ff-only`。
+- 更新、强制更新和切换分支前自动备份 `public`、`data`、`config.yaml`、Git 差异及状态。
+- 强制更新仍会运行 `git reset --hard`，但只有用户在对应菜单中再次确认后才执行，并且会先完成备份。
+
+## 目录结构
 
 ```text
 ST-Manager/
-├── core.sh                 # 核心管理脚本 (菜单逻辑、系统功能)
-├── install.sh              # 一键安装脚本 (环境检测、依赖安装)
-├── conf/                   # 配置文件目录
-│   └── settings.conf       # 用户设置 (代理等)
-└── modules/                # 功能模块目录
-    ├── sillytavern/        # SillyTavern 模块
-    │   ├── functions.sh    # 功能实现 (安装、启动、日志)
-    │   └── menu.conf       # 菜单配置
-    └── gcli2api/           # gcli2api 模块
-        ├── functions.sh    # 功能实现
-        └── menu.conf       # 菜单配置
+├── core.sh
+├── install.sh
+├── conf/settings.conf
+└── modules/
+    ├── sillytavern/
+    │   ├── functions.sh
+    │   └── menu.conf
+    └── gcli2api/
+        ├── functions.sh
+        └── menu.conf
+tests/
+└── security_checks.sh
 ```
 
-## ✨ 功能特性
+在 Bash 环境中可运行 `bash tests/security_checks.sh`，检查全部 Shell 语法和关键安全约束。
 
-* **一键安装**: 自动配置 Node.js, Python, Git 等环境。
-* **SillyTavern 管理**: 支持安装、启动、停止、查看日志、切换分支 (Release/Staging)。
-* **gcli2api 管理**: 集成 gcli2api 逆向服务，支持一键部署和进程管理 (PM2)。
-* **系统管理**: 内置环境修复、自动更新、代理设置等实用功能。
-* **中文界面**: 全中文菜单，操作简单直观。
+## 访问地址
 
-## 🔄 更新说明
+- SillyTavern：`http://127.0.0.1:8000`
+- gcli2api API：`http://127.0.0.1:7861/v1`
+- gcli2api 控制面板：`http://127.0.0.1:7861`
 
-### 如何更新本工具？
+通过 `st-menu` → `gcli2api 管理` → `查看本机访问密码` 查看随机密码。请勿截图、上传或分享这些密码。
 
-在主菜单中选择 **系统管理** -> **更新管理工具**。
+## 更新与恢复
 
-> **注意**: 如果您在中国大陆使用，更新功能通常需要配置代理。
-> 请在 **系统管理** -> **系统设置** 中填入您的 VPN 代理地址 (例如 `http://127.0.0.1:7890`)。
+- 更新管理器：`系统管理` → `更新管理工具`
+- 更新 SillyTavern：`SillyTavern 管理` → `更新（自动备份）`
+- 更新 gcli2api：重新选择 `安装/更新（固定审核版本）`
+- 备份目录：`~/ST-Manager-backups/`
 
-### 如何更新 SillyTavern？
+自动备份不会自动删除。确认新版本长期稳定后，可手动清理不再需要的旧备份。
 
-在 **SillyTavern 管理** 菜单中选择 **更新 SillyTavern**。
+## 上游项目
 
-## ❓ 常见问题与解决方法 (Troubleshooting)
+- [原 ST-Manager](https://github.com/beilusaiying/ST-beilu-Rapid_deployment)
+- [gcli2api](https://github.com/su-kaka/gcli2api)
+- [SillyTavern](https://github.com/SillyTavern/SillyTavern)
+- [ERALINK](https://github.com/404nyaFound/eralink)
 
-### 1. 更新时提示 "No network" 或更新失败
-
-* **原因**: 无法连接 GitHub。
-* **解决**: 请确保您的 VPN 已开启。进入 **系统管理** -> **系统设置**，开启代理开关，并填入正确的代理地址 (如 `http://127.0.0.1:7890`，具体端口请查看您的 VPN 软件设置)。
-
-### 2. 启动 SillyTavern 失败，提示 "MODULE_NOT_FOUND"
-
-* **原因**: 依赖包未正确安装。
-* **解决**:
-  * 在菜单中选择 **SillyTavern 管理** -> **常规更新**，脚本会自动尝试修复依赖。
-  * 或者在 Termux 中手动进入目录运行 `npm install`。
-
-### 3. 出现 "fatal: not a git repository" 错误
-
-* **原因**: 旧版本安装脚本未完整复制文件。
-* **解决**: 请重新运行上方的“快速开始”安装命令覆盖安装一次即可。
-
-### 4. gcli2api 启动失败
-
-* **原因**: 端口冲突或环境问题。
-* **解决**: 使用 **查看日志** 功能检查具体报错。如果是端口占用，请尝试重启手机或手动杀掉 python 进程。
-
-## 🔗 链接
-* **Discord 粉丝群**: [https://discord.gg/agHeDq9bqU](https://discord.gg/agHeDq9bqU)
-
-## 🙏 致谢 (Acknowledgments)
-
-没有以下开源项目的付出，就没有本项目的诞生：
-
-* **随行终端 ERALINK**: [https://github.com/404nyaFound/eralink](https://github.com/404nyaFound/eralink) (本项目的基础框架参考)
-* **gcli2api**: [https://github.com/su-kaka/gcli2api](https://github.com/su-kaka/gcli2api) (强大的逆向 API 服务)
-* **SillyTavern**: [https://github.com/SillyTavern/SillyTavern](https://github.com/SillyTavern/SillyTavern) (优秀的 AI 聊天前端)
-
----
-*Enjoy your AI journey!*
+本 Fork 继续遵循仓库中的许可证与上游组件各自的许可证。
