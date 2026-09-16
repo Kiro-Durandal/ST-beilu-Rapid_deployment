@@ -15,6 +15,8 @@ SETTINGS_FILE="$CONF_DIR/settings.conf"
 UPDATE_REPO_URL="https://github.com/Kiro-Durandal/ST-beilu-Rapid_deployment.git"
 UPDATE_REPO_REF="main"
 BACKUP_ROOT="$HOME/ST-Manager-backups"
+ST_MANAGER_SECURITY_PROFILE="termux-loopback-secrets-v1"
+RELEASE_VALIDATION_ERROR=""
 
 RED='\033[31m'
 GREEN='\033[32m'
@@ -229,13 +231,42 @@ validate_script_tree() {
 
 validate_hardened_release() {
     local root="$1"
+    local core_file="$root/core.sh"
     local gcli_file="$root/modules/gcli2api/functions.sh"
-    [[ -f "$gcli_file" ]] || return 1
-    grep -Fq 'GCLI_COMMIT="87f56c8cb088f25c58d947d54424cc889ae7c9aa"' "$gcli_file" &&
-        grep -Fq 'GCLI_FASTAPI_VERSION="0.118.3"' "$gcli_file" &&
-        grep -Fq 'GCLI_PYDANTIC_VERSION="1.10.26"' "$gcli_file" &&
-        grep -Fq 'env HOST=127.0.0.1 PORT=7861' "$gcli_file" &&
-        grep -Fq 'Do not source this file' "$root/core.sh"
+    RELEASE_VALIDATION_ERROR=""
+
+    if [[ ! -f "$core_file" || ! -f "$gcli_file" ]]; then
+        RELEASE_VALIDATION_ERROR="缺少 core.sh 或 gcli2api 模块"
+        return 1
+    fi
+    if ! grep -Fqx "ST_MANAGER_SECURITY_PROFILE=\"$ST_MANAGER_SECURITY_PROFILE\"" "$core_file"; then
+        RELEASE_VALIDATION_ERROR="安全基线标识缺失或不受支持"
+        return 1
+    fi
+    if ! grep -Fqx 'GCLI_REPO="https://github.com/su-kaka/gcli2api.git"' "$gcli_file" ||
+       ! grep -Eq '^GCLI_COMMIT="[0-9a-f]{40}"$' "$gcli_file"; then
+        RELEASE_VALIDATION_ERROR="gcli2api 来源或提交锁定格式无效"
+        return 1
+    fi
+    if ! grep -Eq '^GCLI_WEB_SHA256="[0-9a-f]{64}"$' "$gcli_file" ||
+       ! grep -Eq '^GCLI_REQUIREMENTS_SHA256="[0-9a-f]{64}"$' "$gcli_file"; then
+        RELEASE_VALIDATION_ERROR="gcli2api 文件哈希约束缺失"
+        return 1
+    fi
+    if ! grep -Eq '^GCLI_FASTAPI_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$gcli_file" ||
+       ! grep -Eq '^GCLI_PYDANTIC_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$gcli_file" ||
+       ! grep -Fq 'gcli_python_smoke_test' "$gcli_file"; then
+        RELEASE_VALIDATION_ERROR="Termux Python 兼容约束缺失"
+        return 1
+    fi
+    if ! grep -Fq 'env HOST=127.0.0.1 PORT=7861' "$gcli_file" ||
+       ! grep -Fq 'openssl rand -hex 24' "$gcli_file" ||
+       ! grep -Fq 'Do not source this file' "$core_file"; then
+        RELEASE_VALIDATION_ERROR="监听地址、随机密码或配置解析约束缺失"
+        return 1
+    fi
+
+    return 0
 }
 
 update_self() {
@@ -251,11 +282,21 @@ update_self() {
         pause
         return
     fi
-    if [[ ! -d "$source_dir" ]] ||
-       ! validate_script_tree "$source_dir" ||
-       ! validate_hardened_release "$source_dir"; then
+    if [[ ! -d "$source_dir" ]]; then
         rm -rf -- "$update_tmp"
-        err "更新包结构、Shell 语法或安全约束检查失败；当前版本未改动。"
+        err "更新包结构检查失败：缺少 ST-Manager 目录；当前版本未改动。"
+        pause
+        return
+    fi
+    if ! validate_script_tree "$source_dir"; then
+        rm -rf -- "$update_tmp"
+        err "更新包 Shell 语法检查失败；当前版本未改动。"
+        pause
+        return
+    fi
+    if ! validate_hardened_release "$source_dir"; then
+        rm -rf -- "$update_tmp"
+        err "更新包安全约束检查失败：$RELEASE_VALIDATION_ERROR；当前版本未改动。"
         pause
         return
     fi
@@ -431,7 +472,7 @@ stop_all_services() {
 show_banner() {
     clear
     echo -e "${BLUE}==============================================${RESET}"
-    echo -e "${GREEN}        与你之歌 v1.3（安全加固版）       ${RESET}"
+    echo -e "${GREEN}       与你之歌 v1.3.1（安全加固版）      ${RESET}"
     echo -e "${BLUE}==============================================${RESET}"
     echo -e "仅供学习与研究；请遵守相关服务条款和当地法律。"
     echo -e "${BLUE}==============================================${RESET}"
