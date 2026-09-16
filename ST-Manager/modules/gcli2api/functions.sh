@@ -2,9 +2,11 @@
 
 GCLI_DIR="$HOME/gcli2api"
 GCLI_REPO="https://github.com/su-kaka/gcli2api.git"
-GCLI_COMMIT="cdbaf37003a92de31b8a02512d43df3ed6de3411"
+GCLI_COMMIT="87f56c8cb088f25c58d947d54424cc889ae7c9aa"
 GCLI_WEB_SHA256="27201103ddd0a564d7be2838f9f3ab0c8253f6b048e46c39371991cabbe9246e"
 GCLI_REQUIREMENTS_SHA256="c54644f73c84e85263bb0d00630b3c06cef57535631a360756bd485ecffe30d6"
+GCLI_FASTAPI_VERSION="0.118.3"
+GCLI_PYDANTIC_VERSION="1.10.26"
 GCLI_CONFIG_DIR="$HOME/.config/st-manager"
 GCLI_ENV_FILE="$GCLI_CONFIG_DIR/gcli2api.env"
 GCLI_CREDS_DIR="$GCLI_DIR/creds"
@@ -151,6 +153,55 @@ gcli_verify_file() {
     [[ "$actual" == "$expected" ]]
 }
 
+gcli_write_compat_requirements() {
+    local input_file="$1" output_file="$2" line package
+
+    : > "$output_file" || return 1
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        package="${line%%[<>=!~ ]*}"
+        case "$package" in
+            fastapi|pydantic) continue ;;
+        esac
+        printf '%s\n' "$line" >> "$output_file" || return 1
+    done < "$input_file"
+
+    {
+        printf 'fastapi==%s\n' "$GCLI_FASTAPI_VERSION"
+        printf 'pydantic==%s\n' "$GCLI_PYDANTIC_VERSION"
+    } >> "$output_file"
+}
+
+gcli_python_smoke_test() {
+    local python_bin="$GCLI_DIR/.venv/bin/python"
+    [[ -x "$python_bin" ]] || return 1
+
+    (
+        cd "$GCLI_DIR" || exit 1
+        GCLI_EXPECT_FASTAPI="$GCLI_FASTAPI_VERSION" \
+        GCLI_EXPECT_PYDANTIC="$GCLI_PYDANTIC_VERSION" \
+        "$python_bin" - <<'PY'
+import os
+
+import fastapi
+import pydantic
+
+expected_fastapi = os.environ["GCLI_EXPECT_FASTAPI"]
+expected_pydantic = os.environ["GCLI_EXPECT_PYDANTIC"]
+if fastapi.__version__ != expected_fastapi:
+    raise RuntimeError(
+        f"FastAPI version mismatch: {fastapi.__version__} != {expected_fastapi}"
+    )
+if pydantic.__version__ != expected_pydantic:
+    raise RuntimeError(
+        f"Pydantic version mismatch: {pydantic.__version__} != {expected_pydantic}"
+    )
+
+import web  # noqa: F401,E402
+PY
+    )
+}
+
 gcli_stop_impl() {
     local name pid stopped=false
     while IFS= read -r name; do
@@ -179,6 +230,7 @@ gcli_stop_impl() {
 
 gcli_install() {
     local packages=() stage_dir source_dir backup_dir="" actual_commit was_running=false
+    local compat_requirements
     [[ -n "${HOME:-}" && "$GCLI_DIR" == "$HOME/gcli2api" ]] || {
         err "gcli2api 目录安全检查失败。"
         pause
@@ -259,8 +311,13 @@ gcli_install() {
     chmod 700 "$GCLI_CREDS_DIR"
 
     echo -e "${BLUE}正在创建隔离的 Python 环境并安装依赖...${RESET}"
+    compat_requirements="$GCLI_DIR/requirements-termux-st-manager.txt"
     if ! python -m venv "$GCLI_DIR/.venv" ||
-       ! "$GCLI_DIR/.venv/bin/python" -m pip install -r "$GCLI_DIR/requirements-termux.txt"; then
+       ! gcli_write_compat_requirements \
+            "$GCLI_DIR/requirements-termux.txt" "$compat_requirements" ||
+       ! "$GCLI_DIR/.venv/bin/python" -m pip install -r "$compat_requirements" ||
+       ! "$GCLI_DIR/.venv/bin/python" -m pip check ||
+       ! gcli_python_smoke_test; then
         rm -rf -- "$GCLI_DIR"
         if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
             mv "$backup_dir" "$GCLI_DIR"
@@ -279,6 +336,7 @@ gcli_install() {
     fi
 
     success "gcli2api 已安装为审核过的固定提交 ${GCLI_COMMIT:0:12}。"
+    echo -e "${GREEN}Termux 兼容依赖: FastAPI $GCLI_FASTAPI_VERSION / Pydantic $GCLI_PYDANTIC_VERSION。${RESET}"
     echo -e "${GREEN}监听地址已强制设为 127.0.0.1，默认 pwd 已禁用。${RESET}"
     if [[ "$was_running" == "true" ]]; then
         gcli_start_impl || warn "更新完成，但自动重启失败。"
@@ -289,6 +347,7 @@ gcli_install() {
 gcli_start_impl() {
     local python_bin="$GCLI_DIR/.venv/bin/python" pid
     [[ -x "$python_bin" && -f "$GCLI_DIR/web.py" ]] || return 1
+    gcli_python_smoke_test >/dev/null 2>&1 || return 1
     gcli_ensure_secrets || return 1
 
     if is_gcli_running; then
