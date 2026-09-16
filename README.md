@@ -4,22 +4,13 @@ ST-Manager 是面向 Android Termux 的 SillyTavern 与 gcli2api 部署、启动
 
 - 原作者：贝露凛倾
 - 安全加固维护：Kiro-Durandal Fork
-- 版本：v1.1
+- 版本：v1.2
 
 > 仅供学习与研究。使用者应自行遵守相关服务条款、账号政策和当地法律。
 
 ## 安装
 
-安全加固改动尚未进入 Fork 的 `main` 时，请解压交付的 ZIP，进入解压目录后直接运行其中的本地安装器：
-
-```bash
-cd "/你解压到的目录" || exit 1
-bash ST-Manager/install.sh
-```
-
-安装器会优先使用同目录下已经下载、可以审阅的文件，不会再从尚未更新的 `main` 拉取旧版。
-
-安全加固改动合并到 Fork 的 `main` 后，可使用：
+从本 Fork 的 `main` 安装：
 
 ```bash
 cd "$HOME" || exit 1
@@ -42,8 +33,10 @@ st-menu
 - 强制通过环境变量监听 `127.0.0.1:7861`，不再暴露到同一 Wi-Fi、热点或 VPN 网络。
 - 首次安装生成独立的 48 位十六进制 API 密码和面板密码，不再使用默认 `pwd`。
 - 密码保存到 `~/.config/st-manager/gcli2api.env`，权限设为 `600`；配置文件按白名单解析，不使用 `source`。
-- 固定到已审核提交 `cdbaf37003a92de31b8a02512d43df3ed6de3411`。
+- 固定到已审核提交 `87f56c8cb088f25c58d947d54424cc889ae7c9aa`。
 - 安装前核对提交 ID，并对 `web.py` 和 `requirements-termux.txt` 做 SHA-256 校验；失败时拒绝安装。
+- 不直接采用上游互相冲突的 Termux 依赖组合；安装时生成本地依赖清单，固定 `FastAPI 0.118.3` 与 `Pydantic 1.10.26`，兼容 Termux 的 Python 3.14 且避免 Pydantic 2 的原生扩展编译问题。
+- 依赖安装后运行 `pip check` 并导入完整 `web` 应用；任一步失败都会恢复更新前的安装。
 - 不再下载并直接执行上游 `master/termux-install.sh`，因此不会替用户改写 Termux 软件源，也不会执行上游的远程硬重置和自动启动逻辑。
 - 更新前完整保留旧目录；凭据目录会复制到新版本。
 
@@ -109,3 +102,4 @@ tests/
 - [ERALINK](https://github.com/404nyaFound/eralink)
 
 本 Fork 继续遵循仓库中的许可证与上游组件各自的许可证。
+
