@@ -250,7 +250,8 @@ st_update_menu() {
         echo -e "  ${GREEN}1)${RESET} 常规更新（仅快进）"
         echo -e "  ${GREEN}2)${RESET} 强制修复更新（丢弃核心文件改动）"
         echo -e "  ${GREEN}0)${RESET} 返回"
-        read -rp "选择: " opt
+        read_menu_choice "选择 [0-2]: " 2 || return
+        opt="$REPLY"
         case "$opt" in
             1)
                 if ! backup_file=$(st_create_backup pre-update); then
@@ -301,11 +302,13 @@ st_switch_branch() {
     echo -e "${BLUE}当前分支: $(git -C "$ST_DIR" rev-parse --abbrev-ref HEAD)${RESET}"
     echo -e "  ${GREEN}1)${RESET} 切换到 Release（稳定版）"
     echo -e "  ${GREEN}2)${RESET} 切换到 Staging（测试版）"
-    read -rp "选择: " opt
+    echo -e "  ${RED}0)${RESET} 返回"
+    read_menu_choice "选择 [0-2]: " 2 || return
+    opt="$REPLY"
     case "$opt" in
         1) target=release ;;
         2) target=staging ;;
-        *) pause; return ;;
+        0) return ;;
     esac
 
     if ! backup_file=$(st_create_backup pre-branch-switch); then
