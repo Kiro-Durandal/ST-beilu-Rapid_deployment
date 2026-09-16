@@ -38,6 +38,26 @@ pause() {
     read -rsp $'按任意键继续...\n' -n 1
 }
 
+read_menu_choice() {
+    local prompt="$1" max="$2" input
+    REPLY=""
+
+    if (( max > 9 )); then
+        read -rp "$prompt" REPLY
+        return
+    fi
+
+    while true; do
+        IFS= read -rsn1 -p "$prompt" input || return 1
+        printf '%s\n' "$input"
+        if [[ "$input" =~ ^[0-9]$ ]] && (( 10#$input <= max )); then
+            REPLY="$input"
+            return 0
+        fi
+        warn "请输入 0-$max 之间的数字。"
+    done
+}
+
 # ==============================================================================
 # Settings Management
 # ==============================================================================
@@ -211,7 +231,9 @@ validate_hardened_release() {
     local root="$1"
     local gcli_file="$root/modules/gcli2api/functions.sh"
     [[ -f "$gcli_file" ]] || return 1
-    grep -Fq 'GCLI_COMMIT="cdbaf37003a92de31b8a02512d43df3ed6de3411"' "$gcli_file" &&
+    grep -Fq 'GCLI_COMMIT="87f56c8cb088f25c58d947d54424cc889ae7c9aa"' "$gcli_file" &&
+        grep -Fq 'GCLI_FASTAPI_VERSION="0.118.3"' "$gcli_file" &&
+        grep -Fq 'GCLI_PYDANTIC_VERSION="1.10.26"' "$gcli_file" &&
         grep -Fq 'env HOST=127.0.0.1 PORT=7861' "$gcli_file" &&
         grep -Fq 'Do not source this file' "$root/core.sh"
 }
@@ -281,7 +303,8 @@ settings_menu() {
         echo -e "1) 切换代理开关 (当前: $USE_PROXY)"
         echo -e "2) 设置代理地址 (当前: $PROXY_URL)"
         echo -e "0) 返回"
-        read -rp "请选择: " choice
+        read_menu_choice "请选择 [0-2]: " 2 || return
+        choice="$REPLY"
         case "$choice" in
             1)
                 if [[ "$USE_PROXY" == "true" ]]; then
@@ -330,13 +353,85 @@ visit_discord() {
     pause
 }
 
+start_all_services() {
+    local failures=0
+    clear
+    echo -e "${BLUE}=== 一键启动全部组件 ===${RESET}"
+
+    echo -e "${BLUE}正在启动 gcli2api...${RESET}"
+    if [[ ! -f "$GCLI_DIR/web.py" ]]; then
+        err "gcli2api 尚未安装。"
+        ((failures++))
+    elif is_gcli_running; then
+        success "gcli2api 已在运行。"
+    elif gcli_start_impl; then
+        success "gcli2api 启动成功。"
+    else
+        err "gcli2api 启动失败，请查看其日志。"
+        ((failures++))
+    fi
+
+    echo -e "${BLUE}正在启动 SillyTavern...${RESET}"
+    if [[ ! -f "$ST_DIR/server.js" ]]; then
+        err "SillyTavern 尚未安装。"
+        ((failures++))
+    elif is_st_running; then
+        success "SillyTavern 已在运行。"
+    elif st_start_impl; then
+        success "SillyTavern 启动成功。"
+    else
+        err "SillyTavern 启动失败，请查看其日志。"
+        ((failures++))
+    fi
+
+    if (( failures == 0 )); then
+        success "两个组件均已启动。"
+    else
+        warn "启动完成，但有 $failures 个组件未成功启动。"
+    fi
+    pause
+}
+
+stop_all_services() {
+    local failures=0
+    clear
+    echo -e "${BLUE}=== 一键停止全部组件 ===${RESET}"
+
+    echo -e "${BLUE}正在停止 SillyTavern...${RESET}"
+    if ! is_st_running; then
+        log "SillyTavern 已经停止。"
+    elif st_stop_impl; then
+        success "SillyTavern 已停止。"
+    else
+        err "SillyTavern 停止失败。"
+        ((failures++))
+    fi
+
+    echo -e "${BLUE}正在停止 gcli2api...${RESET}"
+    if ! is_gcli_running; then
+        log "gcli2api 已经停止。"
+    elif gcli_stop_impl; then
+        success "gcli2api 已停止。"
+    else
+        err "gcli2api 停止失败。"
+        ((failures++))
+    fi
+
+    if (( failures == 0 )); then
+        success "两个组件均已停止。"
+    else
+        warn "停止完成，但有 $failures 个组件未成功停止。"
+    fi
+    pause
+}
+
 # ==============================================================================
 # Menus
 # ==============================================================================
 show_banner() {
     clear
     echo -e "${BLUE}==============================================${RESET}"
-    echo -e "${GREEN}        与你之歌 v1.1（安全加固版）       ${RESET}"
+    echo -e "${GREEN}        与你之歌 v1.3（安全加固版）       ${RESET}"
     echo -e "${BLUE}==============================================${RESET}"
     echo -e "仅供学习与研究；请遵守相关服务条款和当地法律。"
     echo -e "${BLUE}==============================================${RESET}"
@@ -366,7 +461,8 @@ show_group_menu() {
         fi
 
         echo -e "\n${RED}0)${RESET} 返回上一级"
-        read -rp "请选择 [0-$((i-1))]: " choice
+        read_menu_choice "请选择 [0-$((i-1))]: " "$((i-1))" || return
+        choice="$REPLY"
         if [[ "$choice" == "0" ]]; then
             break
         elif [[ -n "${active_options[$choice]}" ]]; then
@@ -385,7 +481,7 @@ show_group_menu() {
 }
 
 main_menu() {
-    local i group choice
+    local i group choice action
     while true; do
         show_banner
         echo -e "${YELLOW}[状态监控]${RESET}"
@@ -395,17 +491,28 @@ main_menu() {
 
         i=1
         declare -A group_map=()
+        declare -A action_map=()
         for group in "${MAIN_GROUP_ORDER[@]}"; do
             echo -e "  ${GREEN}$i)${RESET} $group"
             group_map[$i]="$group"
             ((i++))
         done
+        echo -e "  ${GREEN}$i)${RESET} 一键启动全部组件"
+        action_map[$i]="start_all_services"
+        ((i++))
+        echo -e "  ${GREEN}$i)${RESET} 一键停止全部组件"
+        action_map[$i]="stop_all_services"
+        ((i++))
         echo -e "\n${RED}0)${RESET} 退出"
-        read -rp "请选择 [0-$((i-1))]: " choice
+        read_menu_choice "请选择 [0-$((i-1))]: " "$((i-1))" || exit 0
+        choice="$REPLY"
         if [[ "$choice" == "0" ]]; then
             exit 0
         elif [[ -n "${group_map[$choice]}" ]]; then
             show_group_menu "${group_map[$choice]}"
+        elif [[ -n "${action_map[$choice]}" ]]; then
+            action="${action_map[$choice]}"
+            "$action"
         else
             err "无效选项"
             sleep 1
