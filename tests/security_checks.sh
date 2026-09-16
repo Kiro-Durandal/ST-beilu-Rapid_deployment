@@ -14,7 +14,15 @@ if grep -R -n -F -e 'pkill -f' -e 'nodejs-lts' -e 'master/termux-install.sh' \
     exit 1
 fi
 
-grep -Fq 'GCLI_COMMIT="cdbaf37003a92de31b8a02512d43df3ed6de3411"' \
+grep -Fq 'GCLI_COMMIT="87f56c8cb088f25c58d947d54424cc889ae7c9aa"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'GCLI_FASTAPI_VERSION="0.118.3"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'GCLI_PYDANTIC_VERSION="1.10.26"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'gcli_write_compat_requirements' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'gcli_python_smoke_test' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'env HOST=127.0.0.1 PORT=7861' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
@@ -23,3 +31,4 @@ grep -Fq 'openssl rand -hex 24' \
 grep -Fq 'validate_proxy_url()' "$ROOT/ST-Manager/core.sh"
 
 echo "ST-Manager security checks passed."
+
