@@ -31,4 +31,3 @@ grep -Fq 'openssl rand -hex 24' \
 grep -Fq 'validate_proxy_url()' "$ROOT/ST-Manager/core.sh"
 
 echo "ST-Manager security checks passed."
-
