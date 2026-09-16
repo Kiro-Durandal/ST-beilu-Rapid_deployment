@@ -24,6 +24,11 @@ grep -Fq 'gcli_write_compat_requirements' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'gcli_python_smoke_test' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'start_all_services()' "$ROOT/ST-Manager/core.sh"
+grep -Fq 'stop_all_services()' "$ROOT/ST-Manager/core.sh"
+grep -Fq 'read_menu_choice()' "$ROOT/ST-Manager/core.sh"
+grep -Fq 'GCLI_COMMIT="87f56c8cb088f25c58d947d54424cc889ae7c9aa"' \
+    "$ROOT/ST-Manager/core.sh"
 grep -Fq 'env HOST=127.0.0.1 PORT=7861' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'openssl rand -hex 24' \
