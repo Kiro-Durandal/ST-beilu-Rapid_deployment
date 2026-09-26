@@ -28,6 +28,8 @@ grep -Fq 'fastapi|pydantic|asyncpg) continue' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'POSTGRESQL_URI=' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'MONGODB_URI=' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'start_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'stop_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'read_menu_choice()' "$ROOT/ST-Manager/core.sh"
