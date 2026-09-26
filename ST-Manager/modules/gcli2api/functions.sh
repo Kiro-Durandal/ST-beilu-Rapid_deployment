@@ -1114,6 +1114,7 @@ gcli_start_impl() {
             unset API_PASSWORD PANEL_PASSWORD PASSWORD
             env HOST=127.0.0.1 PORT=7861 \
                 "POSTGRESQL_URI=" \
+                "MONGODB_URI=" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
                 pm2 start "$python_bin" --name "$GCLI_PM2_NAME" --cwd "$GCLI_DIR" -- web.py >/dev/null
         ) || return 1
@@ -1123,6 +1124,7 @@ gcli_start_impl() {
             unset API_PASSWORD PANEL_PASSWORD PASSWORD
             exec nohup env HOST=127.0.0.1 PORT=7861 \
                 "POSTGRESQL_URI=" \
+                "MONGODB_URI=" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
                 "$python_bin" web.py
         ) >> "$GCLI_DIR/gcli.log" 2>&1 &
