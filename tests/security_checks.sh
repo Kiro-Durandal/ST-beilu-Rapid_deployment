@@ -139,4 +139,3 @@ grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
 )
 
 echo "ST-Manager security checks passed."
-
