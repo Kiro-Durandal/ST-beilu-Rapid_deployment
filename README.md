@@ -4,7 +4,7 @@ ST-Manager 是面向 Android Termux 的 SillyTavern 与 gcli2api 部署、启动
 
 - 原作者：贝露凛倾
 - 安全加固维护：Kiro-Durandal Fork
-- 版本：v1.3.1
+- 版本：v1.4
 
 > 仅供学习与研究。使用者应自行遵守相关服务条款、账号政策和当地法律。
 
@@ -28,6 +28,8 @@ st-menu
 
 首页提供“一键启动全部组件”和“一键停止全部组件”。首页及各级数字菜单采用单键操作，按下数字后立即执行，不需要再按 Enter；代理地址、危险操作确认等文本输入仍需按 Enter。
 
+gcli2api 默认仍只监听 `127.0.0.1:7861`。需要让 F50 或其他 Termux 设备为局域网提供 API 时，可在“gcli2api 管理 → LAN API 共享（Nginx）”中启用轻量反向代理。默认绑定 `192.168.0.1:7861`、仅允许 `192.168.0.0/24`；绑定 IP、端口和允许网段均可修改。
+
 ## 本 Fork 的安全改动
 
 ### gcli2api
@@ -39,6 +41,8 @@ st-menu
 - 安装前核对提交 ID，并对 `web.py` 和 `requirements-termux.txt` 做 SHA-256 校验；失败时拒绝安装。
 - 不直接采用上游互相冲突的 Termux 依赖组合；安装时生成本地依赖清单，固定 `FastAPI 0.118.3` 与 `Pydantic 1.10.26`，兼容 Termux 的 Python 3.14 且避免 Pydantic 2 的原生扩展编译问题。
 - 依赖安装后运行 `pip check` 并导入完整 `web` 应用；任一步失败都会恢复更新前的安装。
+- 可选安装独立 Nginx 反向代理：只把 `/v1/`、`/v1beta/`、`/antigravity/v1/`、`/antigravity/v1beta/` 和 `/keepalive` 转发到本机后端，控制面板、凭据、日志及静态页面对 LAN 返回 `403`。
+- LAN 共享拒绝 `0.0.0.0` 和公网地址，只接受设备实际拥有的 RFC 1918 私有 IPv4、`1024-65535` 端口和包含绑定地址的私有 CIDR；流式响应关闭 Nginx 缓冲。
 - 不再下载并直接执行上游 `master/termux-install.sh`，因此不会替用户改写 Termux 软件源，也不会执行上游的远程硬重置和自动启动逻辑。
 - 更新前完整保留旧目录；凭据目录会复制到新版本。
 
