@@ -51,6 +51,21 @@ grep -Fq 'env HOST=127.0.0.1 PORT=7861' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'openssl rand -hex 24' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'gcli_ensure_stored_passwords' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'INSERT OR IGNORE INTO config' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'unset API_PASSWORD PANEL_PASSWORD PASSWORD' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'pm2 delete "$GCLI_PM2_NAME"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+if grep -Fq '"API_PASSWORD=$GCLI_API_PASSWORD"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh" || \
+   grep -Fq '"PANEL_PASSWORD=$GCLI_PANEL_PASSWORD"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"; then
+    echo "gcli2api 密码仍被作为服务环境变量注入。" >&2
+    exit 1
+fi
 grep -Fq 'validate_proxy_url()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'gcli_lan_proxy_menu=LAN API 共享（Nginx）' \
     "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
