@@ -404,7 +404,12 @@ start_all_services() {
         err "gcli2api 尚未安装。"
         ((failures++))
     elif is_gcli_running; then
-        success "gcli2api 已在运行。"
+        if gcli_proxy_start_if_enabled; then
+            success "gcli2api 已在运行。"
+        else
+            err "gcli2api 已运行，但 LAN API 共享启动失败。"
+            ((failures++))
+        fi
     elif gcli_start_impl; then
         success "gcli2api 启动成功。"
     else
@@ -449,7 +454,7 @@ stop_all_services() {
     fi
 
     echo -e "${BLUE}正在停止 gcli2api...${RESET}"
-    if ! is_gcli_running; then
+    if ! is_gcli_running && ! gcli_proxy_is_running; then
         log "gcli2api 已经停止。"
     elif gcli_stop_impl; then
         success "gcli2api 已停止。"
@@ -472,7 +477,7 @@ stop_all_services() {
 show_banner() {
     clear
     echo -e "${BLUE}==============================================${RESET}"
-    echo -e "${GREEN}       与你之歌 v1.3.1（安全加固版）      ${RESET}"
+    echo -e "${GREEN}        与你之歌 v1.4（安全加固版）       ${RESET}"
     echo -e "${BLUE}==============================================${RESET}"
     echo -e "仅供学习与研究；请遵守相关服务条款和当地法律。"
     echo -e "${BLUE}==============================================${RESET}"

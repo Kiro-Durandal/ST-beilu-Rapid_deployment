@@ -48,5 +48,20 @@ grep -Fq 'env HOST=127.0.0.1 PORT=7861' \
 grep -Fq 'openssl rand -hex 24' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'validate_proxy_url()' "$ROOT/ST-Manager/core.sh"
+grep -Fq 'gcli_lan_proxy_menu=LAN API 共享（Nginx）' \
+    "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
+grep -Fq 'GCLI_PROXY_BIND_IP="192.168.0.1"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'GCLI_PROXY_BIND_PORT=7861' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'GCLI_PROXY_ALLOW_CIDR="192.168.0.0/24"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'listen ${GCLI_PROXY_BIND_IP}:${GCLI_PROXY_BIND_PORT};' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'allow ${GCLI_PROXY_ALLOW_CIDR};' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'deny all;' "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'proxy_buffering off;' "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'location / {' "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 
 echo "ST-Manager security checks passed."
