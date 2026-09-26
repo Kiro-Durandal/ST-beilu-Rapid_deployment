@@ -1172,4 +1172,3 @@ gcli_logs() {
     fi
     pause
 }
-
