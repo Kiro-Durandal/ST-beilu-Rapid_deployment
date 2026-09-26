@@ -592,7 +592,10 @@ gcli_write_compat_requirements() {
         line="${line%$'\r'}"
         package="${line%%[<>=!~ ]*}"
         case "$package" in
-            fastapi|pydantic) continue ;;
+            # asyncpg has no usable Android wheel and compiling it can exhaust
+            # the memory of small Termux routers. ST-Manager deliberately uses
+            # gcli2api's default local SQLite backend instead of PostgreSQL.
+            fastapi|pydantic|asyncpg) continue ;;
         esac
         printf '%s\n' "$line" >> "$output_file" || return 1
     done < "$input_file"
@@ -609,6 +612,7 @@ gcli_python_smoke_test() {
 
     (
         cd "$GCLI_DIR" || exit 1
+        POSTGRESQL_URI='' \
         GCLI_EXPECT_FASTAPI="$GCLI_FASTAPI_VERSION" \
         GCLI_EXPECT_PYDANTIC="$GCLI_PYDANTIC_VERSION" \
         "$python_bin" - <<'PY'
@@ -799,12 +803,14 @@ gcli_start_impl() {
     if command -v pm2 >/dev/null 2>&1; then
         if gcli_pm2_owned "$GCLI_PM2_NAME"; then
             env HOST=127.0.0.1 PORT=7861 \
+                "POSTGRESQL_URI=" \
                 "API_PASSWORD=$GCLI_API_PASSWORD" \
                 "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
                 pm2 restart "$GCLI_PM2_NAME" --update-env >/dev/null || return 1
         else
             env HOST=127.0.0.1 PORT=7861 \
+                "POSTGRESQL_URI=" \
                 "API_PASSWORD=$GCLI_API_PASSWORD" \
                 "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
@@ -814,6 +820,7 @@ gcli_start_impl() {
         (
             cd "$GCLI_DIR" || exit 1
             exec nohup env HOST=127.0.0.1 PORT=7861 \
+                "POSTGRESQL_URI=" \
                 "API_PASSWORD=$GCLI_API_PASSWORD" \
                 "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
@@ -865,3 +872,4 @@ gcli_logs() {
     fi
     pause
 }
+
