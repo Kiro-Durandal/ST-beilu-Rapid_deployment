@@ -40,6 +40,7 @@ gcli2api 默认仍只监听 `127.0.0.1:7861`。需要让 F50 或其他 Termux �
 - 固定到已审核提交 `87f56c8cb088f25c58d947d54424cc889ae7c9aa`。
 - 安装前核对提交 ID，并对 `web.py` 和 `requirements-termux.txt` 做 SHA-256 校验；失败时拒绝安装。
 - 不直接采用上游互相冲突的 Termux 依赖组合；安装时生成本地依赖清单，固定 `FastAPI 0.118.3` 与 `Pydantic 1.10.26`，兼容 Termux 的 Python 3.14 且避免 Pydantic 2 的原生扩展编译问题。
+- F50/Termux 使用上游默认的本地 SQLite 存储，并排除只供 PostgreSQL 模式使用、需要在 Android 上现场编译的 `asyncpg`，避免低内存设备在 `Building wheel for asyncpg` 阶段被系统杀死。此安装配置不提供 PostgreSQL 存储模式。
 - 依赖安装后运行 `pip check` 并导入完整 `web` 应用；任一步失败都会恢复更新前的安装。
 - 可选安装独立 Nginx 反向代理：只把 `/v1/`、`/v1beta/`、`/antigravity/v1/`、`/antigravity/v1beta/` 和 `/keepalive` 转发到本机后端，控制面板、凭据、日志及静态页面对 LAN 返回 `403`。
 - LAN 共享拒绝 `0.0.0.0` 和公网地址，只接受设备实际拥有的 RFC 1918 私有 IPv4、`1024-65535` 端口和包含绑定地址的私有 CIDR；流式响应关闭 Nginx 缓冲。
@@ -110,3 +111,4 @@ tests/
 - [ERALINK](https://github.com/404nyaFound/eralink)
 
 本 Fork 继续遵循仓库中的许可证与上游组件各自的许可证。
+
