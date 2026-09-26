@@ -4,7 +4,7 @@ ST-Manager 是面向 Android Termux 的 SillyTavern 与 gcli2api 部署、启动
 
 - 原作者：贝露凛倾
 - 安全加固维护：Kiro-Durandal Fork
-- 版本：v1.5
+- 版本：v1.5.1
 
 > 仅供学习与研究。使用者应自行遵守相关服务条款、账号政策和当地法律。
 
@@ -36,7 +36,8 @@ gcli2api 默认仍只监听 `127.0.0.1:7861`。需要让 F50 或其他 Termux �
 
 - 强制通过环境变量监听 `127.0.0.1:7861`，不再暴露到同一 Wi-Fi、热点或 VPN 网络。
 - 首次安装生成独立的 48 位十六进制 API 密码和面板密码，不再使用默认 `pwd`。
-- 密码保存到 `~/.config/st-manager/gcli2api.env`，权限设为 `600`；配置文件按白名单解析，不使用 `source`。
+- 首次生成的密码种子保存到 `~/.config/st-manager/gcli2api.env`，权限设为 `600`；配置文件按白名单解析，不使用 `source`。实际密码写入 gcli2api 的 SQLite 配置后不再作为环境变量注入，因此控制面板可以修改并持久保存 API 密码、面板密码和兼容用通用密码。
+- 启动时会重建属于 ST-Manager 的 PM2 记录并清除旧的 `API_PASSWORD`、`PANEL_PASSWORD` 与 `PASSWORD` 环境变量，避免上游把密码输入框锁成只读；随机种子只在 SQLite 尚无对应密码时使用，不会覆盖之后在控制面板保存的值。
 - 固定到已审核提交 `87f56c8cb088f25c58d947d54424cc889ae7c9aa`。
 - 安装前核对提交 ID，并对 `web.py` 和 `requirements-termux.txt` 做 SHA-256 校验；失败时拒绝安装。
 - 不直接采用上游互相冲突的 Termux 依赖组合；安装时生成本地依赖清单，固定 `FastAPI 0.118.3` 与 `Pydantic 1.10.26`，兼容 Termux 的 Python 3.14 且避免 Pydantic 2 的原生扩展编译问题。
@@ -95,7 +96,7 @@ tests/
 
 启用 LAN 共享后，API 使用配置的 LAN 地址；只有“完整转发”模式允许从同一地址访问控制面板。完整转发仅适合可信局域网，因为 HTTP 本身不加密。
 
-通过 `st-menu` → `gcli2api 管理` → `查看本机访问密码` 查看随机密码。请勿截图、上传或分享这些密码。
+通过 `st-menu` → `gcli2api 管理` → `查看本机访问密码` 查看 SQLite 中当前生效的 API 与面板密码。控制面板修改后此处会同步显示新值；通用密码只是未单独设置 API/面板密码时的兼容回退项。请勿截图、上传或分享这些密码。
 
 ## 更新与恢复
 
