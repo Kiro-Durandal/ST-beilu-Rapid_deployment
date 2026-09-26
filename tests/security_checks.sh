@@ -24,6 +24,10 @@ grep -Fq 'gcli_write_compat_requirements' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'gcli_python_smoke_test' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'fastapi|pydantic|asyncpg) continue' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'POSTGRESQL_URI=' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'start_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'stop_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'read_menu_choice()' "$ROOT/ST-Manager/core.sh"
@@ -65,3 +69,4 @@ grep -Fq 'proxy_buffering off;' "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'location / {' "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 
 echo "ST-Manager security checks passed."
+
