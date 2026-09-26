@@ -155,6 +155,107 @@ gcli_ensure_secrets() {
     gcli_create_secrets
 }
 
+gcli_password_store() {
+    local action="$1" status
+    local python_bin="$GCLI_DIR/.venv/bin/python"
+    [[ -x "$python_bin" ]] || return 1
+    mkdir -p "$GCLI_CREDS_DIR"
+    chmod 700 "$GCLI_CREDS_DIR"
+
+    (
+        # Password environment variables make these fields read-only in the
+        # upstream control panel. Keep them out of both this helper and the
+        # long-running server process.
+        unset API_PASSWORD PANEL_PASSWORD PASSWORD
+        env \
+            "GCLI_PASSWORD_DB=$GCLI_CREDS_DIR/credentials.db" \
+            "GCLI_INITIAL_API_PASSWORD=$GCLI_API_PASSWORD" \
+            "GCLI_INITIAL_PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
+            "$python_bin" - "$action" <<'PY'
+import base64
+import json
+import os
+import sqlite3
+import sys
+
+
+def as_text(raw):
+    if raw is None:
+        return ""
+    try:
+        value = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        value = raw
+    return value if isinstance(value, str) else str(value)
+
+
+action = sys.argv[1]
+database = os.environ["GCLI_PASSWORD_DB"]
+connection = sqlite3.connect(database, timeout=10)
+try:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at REAL DEFAULT (unixepoch())
+        )
+        """
+    )
+
+    if action == "ensure":
+        initial_values = {
+            "api_password": os.environ["GCLI_INITIAL_API_PASSWORD"],
+            "panel_password": os.environ["GCLI_INITIAL_PANEL_PASSWORD"],
+        }
+        for key, value in initial_values.items():
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO config (key, value, updated_at)
+                VALUES (?, ?, unixepoch())
+                """,
+                (key, json.dumps(value)),
+            )
+        connection.commit()
+    elif action == "read":
+        encoded_values = []
+        for key in ("api_password", "panel_password"):
+            row = connection.execute(
+                "SELECT value FROM config WHERE key = ?", (key,)
+            ).fetchone()
+            value = as_text(row[0]) if row else ""
+            encoded_values.append(
+                base64.b64encode(value.encode("utf-8")).decode("ascii")
+            )
+        print(":".join(encoded_values))
+    else:
+        raise SystemExit(f"unsupported password-store action: {action}")
+finally:
+    connection.close()
+PY
+    )
+    status=$?
+    [[ -f "$GCLI_CREDS_DIR/credentials.db" ]] && \
+        chmod 600 "$GCLI_CREDS_DIR/credentials.db" 2>/dev/null || true
+    return "$status"
+}
+
+gcli_ensure_stored_passwords() {
+    gcli_ensure_secrets || return 1
+    gcli_password_store ensure
+}
+
+gcli_read_stored_passwords() {
+    local api_encoded panel_encoded output
+    gcli_ensure_stored_passwords || return 1
+    output=$(gcli_password_store read) || return 1
+    [[ "$output" == *:* ]] || return 1
+    IFS=: read -r api_encoded panel_encoded <<< "$output"
+
+    GCLI_API_PASSWORD=$(printf '%s' "$api_encoded" | base64 -d) || return 1
+    GCLI_PANEL_PASSWORD=$(printf '%s' "$panel_encoded" | base64 -d) || return 1
+}
+
 gcli_proxy_defaults() {
     GCLI_PROXY_MODE="api"
     GCLI_PROXY_AUTO_START=false
@@ -759,16 +860,16 @@ gcli_lan_proxy_menu() {
 }
 
 gcli_show_credentials() {
-    if ! gcli_ensure_secrets; then
-        err "无法读取或生成 gcli2api 密码。"
+    if ! gcli_read_stored_passwords; then
+        err "无法读取 gcli2api 当前密码。"
         pause
         return
     fi
     echo -e "${YELLOW}请勿截图或分享以下密码。${RESET}"
     echo -e "API 地址: ${GREEN}http://127.0.0.1:7861/v1${RESET}"
-    echo -e "API 密码: ${GREEN}$GCLI_API_PASSWORD${RESET}"
+    printf 'API 密码: %b%s%b\n' "$GREEN" "$GCLI_API_PASSWORD" "$RESET"
     echo -e "控制面板: ${GREEN}http://127.0.0.1:7861${RESET}"
-    echo -e "面板密码: ${GREEN}$GCLI_PANEL_PASSWORD${RESET}"
+    printf '面板密码: %b%s%b\n' "$GREEN" "$GCLI_PANEL_PASSWORD" "$RESET"
     if gcli_proxy_load_settings >/dev/null 2>&1 && gcli_proxy_is_running; then
         echo -e "LAN API: ${GREEN}http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT/v1${RESET}"
         if [[ "$GCLI_PROXY_MODE" == "full" ]]; then
@@ -974,8 +1075,8 @@ gcli_install() {
     fi
     rm -rf -- "$stage_dir"
 
-    if ! gcli_ensure_secrets; then
-        err "随机密码生成失败；服务未启动。"
+    if ! gcli_ensure_stored_passwords; then
+        err "随机密码初始化失败；服务未启动。"
         pause
         return
     fi
@@ -993,7 +1094,7 @@ gcli_start_impl() {
     local python_bin="$GCLI_DIR/.venv/bin/python" pid
     [[ -x "$python_bin" && -f "$GCLI_DIR/web.py" ]] || return 1
     gcli_python_smoke_test >/dev/null 2>&1 || return 1
-    gcli_ensure_secrets || return 1
+    gcli_ensure_stored_passwords || return 1
 
     if is_gcli_running; then
         gcli_proxy_start_if_enabled || true
@@ -1005,27 +1106,23 @@ gcli_start_impl() {
 
     if command -v pm2 >/dev/null 2>&1; then
         if gcli_pm2_owned "$GCLI_PM2_NAME"; then
-            env HOST=127.0.0.1 PORT=7861 \
-                "POSTGRESQL_URI=" \
-                "API_PASSWORD=$GCLI_API_PASSWORD" \
-                "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
-                "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
-                pm2 restart "$GCLI_PM2_NAME" --update-env >/dev/null || return 1
-        else
-            env HOST=127.0.0.1 PORT=7861 \
-                "POSTGRESQL_URI=" \
-                "API_PASSWORD=$GCLI_API_PASSWORD" \
-                "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
-                "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
-                pm2 start "$python_bin" --name "$GCLI_PM2_NAME" --cwd "$GCLI_DIR" -- web.py >/dev/null || return 1
+            # Recreate the owned PM2 entry so --update-env cannot retain the
+            # old API_PASSWORD/PANEL_PASSWORD/PASSWORD variables.
+            pm2 delete "$GCLI_PM2_NAME" >/dev/null 2>&1 || return 1
         fi
+        (
+            unset API_PASSWORD PANEL_PASSWORD PASSWORD
+            env HOST=127.0.0.1 PORT=7861 \
+                "POSTGRESQL_URI=" \
+                "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
+                pm2 start "$python_bin" --name "$GCLI_PM2_NAME" --cwd "$GCLI_DIR" -- web.py >/dev/null
+        ) || return 1
     else
         (
             cd "$GCLI_DIR" || exit 1
+            unset API_PASSWORD PANEL_PASSWORD PASSWORD
             exec nohup env HOST=127.0.0.1 PORT=7861 \
                 "POSTGRESQL_URI=" \
-                "API_PASSWORD=$GCLI_API_PASSWORD" \
-                "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
                 "$python_bin" web.py
         ) >> "$GCLI_DIR/gcli.log" 2>&1 &
