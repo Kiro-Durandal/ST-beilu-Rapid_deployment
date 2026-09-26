@@ -24,6 +24,10 @@ grep -Fq 'gcli_write_compat_requirements' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'gcli_python_smoke_test' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'fastapi|pydantic|asyncpg) continue' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'POSTGRESQL_URI=' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'start_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'stop_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'read_menu_choice()' "$ROOT/ST-Manager/core.sh"
@@ -63,5 +67,10 @@ grep -Fq 'allow ${GCLI_PROXY_ALLOW_CIDR};' \
 grep -Fq 'deny all;' "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'proxy_buffering off;' "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'location / {' "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq '无法读取接口列表；继续交由 Nginx 检查实际绑定。' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 
 echo "ST-Manager security checks passed."
+

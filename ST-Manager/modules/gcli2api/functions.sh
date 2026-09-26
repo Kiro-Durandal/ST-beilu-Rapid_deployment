@@ -284,6 +284,12 @@ gcli_proxy_install_dependencies() {
     (( ${#packages[@]} == 0 )) || pkg install -y "${packages[@]}"
 }
 
+gcli_proxy_log_diagnostic() {
+    mkdir -p "$GCLI_PROXY_ROOT/logs" 2>/dev/null || return 0
+    printf '[%s] [st-manager] %s\n' \
+        "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$GCLI_PROXY_ERROR_LOG" 2>/dev/null || true
+}
+
 gcli_proxy_write_nginx_config() {
     local temp_conf
     gcli_proxy_validate_settings || return 1
@@ -358,7 +364,8 @@ http {
     }
 }
 EOF
-    if ! nginx -t -p "$GCLI_PROXY_ROOT/" -c "$temp_conf"; then
+    if ! nginx -t -p "$GCLI_PROXY_ROOT/" -c "$temp_conf" \
+        2>> "$GCLI_PROXY_ERROR_LOG"; then
         rm -f -- "$temp_conf"
         return 1
     fi
@@ -367,16 +374,49 @@ EOF
 }
 
 gcli_proxy_start_impl() {
-    gcli_proxy_load_settings || return 1
+    local bind_check
+    if ! gcli_proxy_load_settings; then
+        gcli_proxy_log_diagnostic "LAN API 共享配置无效。"
+        return 1
+    fi
     [[ "$GCLI_PROXY_ENABLED" == "true" ]] || return 0
-    is_gcli_running || return 1
-    command -v nginx >/dev/null 2>&1 || return 1
-    gcli_proxy_bind_ip_present || return 1
+    if ! is_gcli_running; then
+        gcli_proxy_log_diagnostic "gcli2api 后端未运行。"
+        return 1
+    fi
+    if ! command -v nginx >/dev/null 2>&1; then
+        gcli_proxy_log_diagnostic "未找到 nginx 命令。"
+        return 1
+    fi
+    if gcli_proxy_bind_ip_present; then
+        :
+    else
+        bind_check=$?
+        case "$bind_check" in
+            1)
+                gcli_proxy_log_diagnostic \
+                    "设备接口中未发现绑定地址 $GCLI_PROXY_BIND_IP。"
+                return 1
+                ;;
+            2)
+                gcli_proxy_log_diagnostic \
+                    "无法读取接口列表；继续交由 Nginx 检查实际绑定。"
+                ;;
+            *)
+                gcli_proxy_log_diagnostic "接口地址检查发生未知错误。"
+                return 1
+                ;;
+        esac
+    fi
     gcli_proxy_is_running && return 0
     gcli_proxy_write_nginx_config || return 1
-    nginx -p "$GCLI_PROXY_ROOT/" -c "$GCLI_PROXY_CONF" || return 1
+    nginx -p "$GCLI_PROXY_ROOT/" -c "$GCLI_PROXY_CONF" \
+        2>> "$GCLI_PROXY_ERROR_LOG" || return 1
     sleep 1
-    gcli_proxy_is_running
+    if ! gcli_proxy_is_running; then
+        gcli_proxy_log_diagnostic "Nginx 启动后未通过进程归属检查。"
+        return 1
+    fi
 }
 
 gcli_proxy_start_if_enabled() {
@@ -592,7 +632,10 @@ gcli_write_compat_requirements() {
         line="${line%$'\r'}"
         package="${line%%[<>=!~ ]*}"
         case "$package" in
-            fastapi|pydantic) continue ;;
+            # asyncpg has no usable Android wheel and compiling it can exhaust
+            # the memory of small Termux routers. ST-Manager deliberately uses
+            # gcli2api's default local SQLite backend instead of PostgreSQL.
+            fastapi|pydantic|asyncpg) continue ;;
         esac
         printf '%s\n' "$line" >> "$output_file" || return 1
     done < "$input_file"
@@ -609,6 +652,7 @@ gcli_python_smoke_test() {
 
     (
         cd "$GCLI_DIR" || exit 1
+        POSTGRESQL_URI='' \
         GCLI_EXPECT_FASTAPI="$GCLI_FASTAPI_VERSION" \
         GCLI_EXPECT_PYDANTIC="$GCLI_PYDANTIC_VERSION" \
         "$python_bin" - <<'PY'
@@ -799,12 +843,14 @@ gcli_start_impl() {
     if command -v pm2 >/dev/null 2>&1; then
         if gcli_pm2_owned "$GCLI_PM2_NAME"; then
             env HOST=127.0.0.1 PORT=7861 \
+                "POSTGRESQL_URI=" \
                 "API_PASSWORD=$GCLI_API_PASSWORD" \
                 "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
                 pm2 restart "$GCLI_PM2_NAME" --update-env >/dev/null || return 1
         else
             env HOST=127.0.0.1 PORT=7861 \
+                "POSTGRESQL_URI=" \
                 "API_PASSWORD=$GCLI_API_PASSWORD" \
                 "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
@@ -814,6 +860,7 @@ gcli_start_impl() {
         (
             cd "$GCLI_DIR" || exit 1
             exec nohup env HOST=127.0.0.1 PORT=7861 \
+                "POSTGRESQL_URI=" \
                 "API_PASSWORD=$GCLI_API_PASSWORD" \
                 "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
@@ -865,3 +912,4 @@ gcli_logs() {
     fi
     pause
 }
+
