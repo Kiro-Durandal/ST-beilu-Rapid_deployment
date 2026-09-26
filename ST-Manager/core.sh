@@ -569,4 +569,3 @@ main_menu() {
 load_settings
 load_modules
 main_menu
-
