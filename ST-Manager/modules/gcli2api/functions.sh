@@ -88,20 +88,26 @@ is_gcli_running() {
 }
 
 gcli_status_text() {
-    local ver status proxy_status
+    local ver status proxy_status mode_text auto_text
     ver=$(get_gcli_version)
     if is_gcli_running; then
         status="${GREEN}运行中（后端 127.0.0.1:7861）${RESET}"
     else
         status="${RED}已停止${RESET}"
     fi
-    if gcli_proxy_is_running; then
-        gcli_proxy_load_settings >/dev/null 2>&1 || true
-        proxy_status="${GREEN}LAN ${GCLI_PROXY_BIND_IP}:${GCLI_PROXY_BIND_PORT}${RESET}"
-    elif gcli_proxy_load_settings >/dev/null 2>&1 && [[ "$GCLI_PROXY_ENABLED" == "true" ]]; then
-        proxy_status="${YELLOW}LAN 共享待启动${RESET}"
+    gcli_proxy_load_settings >/dev/null 2>&1 || gcli_proxy_defaults
+    mode_text=$(gcli_proxy_mode_text)
+    if [[ "$GCLI_PROXY_AUTO_START" == "true" ]]; then
+        auto_text="自动启动：开"
     else
-        proxy_status="${BLUE}LAN 共享关闭${RESET}"
+        auto_text="自动启动：关"
+    fi
+    if gcli_proxy_is_running; then
+        proxy_status="${GREEN}${GCLI_PROXY_BIND_IP}:${GCLI_PROXY_BIND_PORT}（$mode_text，$auto_text）${RESET}"
+    elif [[ "$GCLI_PROXY_AUTO_START" == "true" ]]; then
+        proxy_status="${YELLOW}已停止（$mode_text，$auto_text）${RESET}"
+    else
+        proxy_status="${BLUE}已停止（$mode_text，$auto_text）${RESET}"
     fi
     echo -e "gcli2api   : ${GREEN}$ver${RESET} | $status"
     echo -e "LAN API    : $proxy_status"
@@ -149,11 +155,121 @@ gcli_ensure_secrets() {
     gcli_create_secrets
 }
 
+gcli_password_store() {
+    local action="$1" status
+    local python_bin="$GCLI_DIR/.venv/bin/python"
+    [[ -x "$python_bin" ]] || return 1
+    mkdir -p "$GCLI_CREDS_DIR"
+    chmod 700 "$GCLI_CREDS_DIR"
+
+    (
+        # Password environment variables make these fields read-only in the
+        # upstream control panel. Keep them out of both this helper and the
+        # long-running server process.
+        unset API_PASSWORD PANEL_PASSWORD PASSWORD
+        env \
+            "GCLI_PASSWORD_DB=$GCLI_CREDS_DIR/credentials.db" \
+            "GCLI_INITIAL_API_PASSWORD=$GCLI_API_PASSWORD" \
+            "GCLI_INITIAL_PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
+            "$python_bin" - "$action" <<'PY'
+import base64
+import json
+import os
+import sqlite3
+import sys
+
+
+def as_text(raw):
+    if raw is None:
+        return ""
+    try:
+        value = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        value = raw
+    return value if isinstance(value, str) else str(value)
+
+
+action = sys.argv[1]
+database = os.environ["GCLI_PASSWORD_DB"]
+connection = sqlite3.connect(database, timeout=10)
+try:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS config (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at REAL DEFAULT (unixepoch())
+        )
+        """
+    )
+
+    if action == "ensure":
+        initial_values = {
+            "api_password": os.environ["GCLI_INITIAL_API_PASSWORD"],
+            "panel_password": os.environ["GCLI_INITIAL_PANEL_PASSWORD"],
+        }
+        for key, value in initial_values.items():
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO config (key, value, updated_at)
+                VALUES (?, ?, unixepoch())
+                """,
+                (key, json.dumps(value)),
+            )
+        connection.commit()
+    elif action == "read":
+        encoded_values = []
+        for key in ("api_password", "panel_password"):
+            row = connection.execute(
+                "SELECT value FROM config WHERE key = ?", (key,)
+            ).fetchone()
+            value = as_text(row[0]) if row else ""
+            encoded_values.append(
+                base64.b64encode(value.encode("utf-8")).decode("ascii")
+            )
+        print(":".join(encoded_values))
+    else:
+        raise SystemExit(f"unsupported password-store action: {action}")
+finally:
+    connection.close()
+PY
+    )
+    status=$?
+    [[ -f "$GCLI_CREDS_DIR/credentials.db" ]] && \
+        chmod 600 "$GCLI_CREDS_DIR/credentials.db" 2>/dev/null || true
+    return "$status"
+}
+
+gcli_ensure_stored_passwords() {
+    gcli_ensure_secrets || return 1
+    gcli_password_store ensure
+}
+
+gcli_read_stored_passwords() {
+    local api_encoded panel_encoded output
+    gcli_ensure_stored_passwords || return 1
+    output=$(gcli_password_store read) || return 1
+    [[ "$output" == *:* ]] || return 1
+    IFS=: read -r api_encoded panel_encoded <<< "$output"
+
+    GCLI_API_PASSWORD=$(printf '%s' "$api_encoded" | base64 -d) || return 1
+    GCLI_PANEL_PASSWORD=$(printf '%s' "$panel_encoded" | base64 -d) || return 1
+}
+
 gcli_proxy_defaults() {
-    GCLI_PROXY_ENABLED=false
+    GCLI_PROXY_MODE="api"
+    GCLI_PROXY_AUTO_START=false
     GCLI_PROXY_BIND_IP="192.168.0.1"
     GCLI_PROXY_BIND_PORT=7861
     GCLI_PROXY_ALLOW_CIDR="192.168.0.0/24"
+}
+
+gcli_proxy_mode_text() {
+    case "$GCLI_PROXY_MODE" in
+        api) printf '仅 API' ;;
+        full) printf '完整转发' ;;
+        *) printf '未知' ;;
+    esac
 }
 
 gcli_proxy_ipv4_to_int() {
@@ -192,7 +308,8 @@ gcli_proxy_validate_cidr() {
 
 gcli_proxy_validate_settings() {
     local bind_value network prefix network_value mask
-    [[ "$GCLI_PROXY_ENABLED" == "true" || "$GCLI_PROXY_ENABLED" == "false" ]] || return 1
+    [[ "$GCLI_PROXY_MODE" == "api" || "$GCLI_PROXY_MODE" == "full" ]] || return 1
+    [[ "$GCLI_PROXY_AUTO_START" == "true" || "$GCLI_PROXY_AUTO_START" == "false" ]] || return 1
     gcli_proxy_private_ipv4 "$GCLI_PROXY_BIND_IP" || return 1
     [[ "$GCLI_PROXY_BIND_PORT" =~ ^[0-9]{4,5}$ ]] || return 1
     (( 10#$GCLI_PROXY_BIND_PORT >= 1024 && 10#$GCLI_PROXY_BIND_PORT <= 65535 )) || return 1
@@ -207,7 +324,7 @@ gcli_proxy_validate_settings() {
 }
 
 gcli_proxy_load_settings() {
-    local key value
+    local key value legacy_enabled="" auto_start_seen=false
     gcli_proxy_defaults
     [[ -f "$GCLI_PROXY_SETTINGS_FILE" ]] || return 0
 
@@ -215,12 +332,24 @@ gcli_proxy_load_settings() {
         key="${key%$'\r'}"
         value="${value%$'\r'}"
         case "$key" in
-            ENABLED) GCLI_PROXY_ENABLED="$value" ;;
+            ENABLED) legacy_enabled="$value" ;;
+            MODE) GCLI_PROXY_MODE="$value" ;;
+            AUTO_START)
+                GCLI_PROXY_AUTO_START="$value"
+                auto_start_seen=true
+                ;;
             BIND_IP) GCLI_PROXY_BIND_IP="$value" ;;
             BIND_PORT) GCLI_PROXY_BIND_PORT="$value" ;;
             ALLOW_CIDR) GCLI_PROXY_ALLOW_CIDR="$value" ;;
         esac
     done < "$GCLI_PROXY_SETTINGS_FILE"
+
+    # v1.4 used ENABLED as both running intent and automatic startup. Preserve
+    # that behavior once, while new configurations keep those states separate.
+    if [[ "$auto_start_seen" == "false" &&
+          ( "$legacy_enabled" == "true" || "$legacy_enabled" == "false" ) ]]; then
+        GCLI_PROXY_AUTO_START="$legacy_enabled"
+    fi
 
     chmod 600 "$GCLI_PROXY_SETTINGS_FILE" 2>/dev/null || true
     gcli_proxy_validate_settings
@@ -233,7 +362,10 @@ gcli_proxy_save_settings() {
     chmod 700 "$GCLI_CONFIG_DIR"
     temp_file=$(mktemp "$GCLI_CONFIG_DIR/.gcli2api-lan.XXXXXX") || return 1
     {
-        printf 'ENABLED=%s\n' "$GCLI_PROXY_ENABLED"
+        # ENABLED remains as a rollback-compatible alias for v1.4.
+        printf 'ENABLED=%s\n' "$GCLI_PROXY_AUTO_START"
+        printf 'MODE=%s\n' "$GCLI_PROXY_MODE"
+        printf 'AUTO_START=%s\n' "$GCLI_PROXY_AUTO_START"
         printf 'BIND_IP=%s\n' "$GCLI_PROXY_BIND_IP"
         printf 'BIND_PORT=%s\n' "$GCLI_PROXY_BIND_PORT"
         printf 'ALLOW_CIDR=%s\n' "$GCLI_PROXY_ALLOW_CIDR"
@@ -357,10 +489,35 @@ http {
             proxy_http_version 1.1;
             proxy_buffering off;
         }
-
+EOF
+    if [[ "$GCLI_PROXY_MODE" == "full" ]]; then
+        cat >> "$temp_conf" <<EOF
+        # Full forwarding exposes the authenticated control panel and
+        # credential-management routes to the configured client CIDR.
+        location / {
+            proxy_pass http://127.0.0.1:7861;
+            proxy_http_version 1.1;
+            proxy_set_header Host 127.0.0.1:7861;
+            proxy_set_header Connection "";
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_buffering off;
+            proxy_request_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }
+EOF
+    else
+        cat >> "$temp_conf" <<'EOF'
+        # API-only mode blocks the control panel, credentials, logs and assets.
         location / {
             return 403;
         }
+EOF
+    fi
+    cat >> "$temp_conf" <<'EOF'
     }
 }
 EOF
@@ -379,7 +536,6 @@ gcli_proxy_start_impl() {
         gcli_proxy_log_diagnostic "LAN API 共享配置无效。"
         return 1
     fi
-    [[ "$GCLI_PROXY_ENABLED" == "true" ]] || return 0
     if ! is_gcli_running; then
         gcli_proxy_log_diagnostic "gcli2api 后端未运行。"
         return 1
@@ -424,7 +580,7 @@ gcli_proxy_start_if_enabled() {
         warn "LAN API 共享配置无效，未启动 Nginx。"
         return 1
     }
-    [[ "$GCLI_PROXY_ENABLED" == "true" ]] || return 0
+    [[ "$GCLI_PROXY_AUTO_START" == "true" ]] || return 0
     if ! gcli_proxy_start_impl; then
         warn "gcli2api 已运行，但 LAN API 共享启动失败。"
         return 1
@@ -459,7 +615,7 @@ gcli_proxy_configure() {
         pause
         return
     }
-    if [[ "$GCLI_PROXY_ENABLED" == "true" ]] || gcli_proxy_is_running; then
+    if gcli_proxy_is_running; then
         warn "请先关闭 LAN API 共享，再修改监听配置。"
         pause
         return
@@ -484,23 +640,34 @@ gcli_proxy_configure() {
 }
 
 gcli_proxy_enable() {
-    local confirm bind_check
+    local confirm bind_check mode_text
     if ! gcli_proxy_load_settings; then
         err "LAN API 共享配置无效。"
         pause
         return
     fi
     if gcli_proxy_is_running; then
-        success "LAN API 已在 http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT 运行。"
+        success "LAN 共享已在 http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT 运行。"
         pause
         return
     fi
 
-    echo -e "${YELLOW}将向 $GCLI_PROXY_ALLOW_CIDR 开放 API 路径，但继续阻止控制面板。${RESET}"
+    mode_text=$(gcli_proxy_mode_text)
+    if [[ "$GCLI_PROXY_MODE" == "full" ]]; then
+        echo -e "${YELLOW}完整转发将向 $GCLI_PROXY_ALLOW_CIDR 开放控制面板和凭证管理。${RESET}"
+        echo -e "访问仍需随机面板密码，但 HTTP 流量未加密。"
+    else
+        echo -e "${YELLOW}仅 API 模式将开放 API 路径，并继续阻止控制面板。${RESET}"
+    fi
     echo -e "传输仍是 HTTP；请仅在可信局域网使用，并保管好 API 密码。"
-    read -rp "确认启用 $GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT？(y/N): " confirm
+    read -rp "确认以 [$mode_text] 启动 $GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT？(y/N): " confirm
     [[ "$confirm" =~ ^[Yy]$ ]] || return
 
+    if ! gcli_proxy_save_settings; then
+        err "无法保存 LAN 共享配置。"
+        pause
+        return
+    fi
     if ! gcli_proxy_install_dependencies; then
         err "Nginx 安装失败。"
         pause
@@ -527,32 +694,114 @@ gcli_proxy_enable() {
         fi
     fi
 
-    GCLI_PROXY_ENABLED=true
-    if ! gcli_proxy_save_settings || ! gcli_proxy_start_impl; then
-        GCLI_PROXY_ENABLED=false
-        gcli_proxy_save_settings >/dev/null 2>&1 || true
+    if ! gcli_proxy_start_impl; then
         err "LAN API 共享启动失败；后端仍仅监听 127.0.0.1。"
         [[ -f "$GCLI_PROXY_ERROR_LOG" ]] && tail -n 20 "$GCLI_PROXY_ERROR_LOG"
         pause
         return
     fi
-    success "LAN API 已开放：http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT/v1"
-    echo -e "控制面板仍只能从 ${GREEN}http://127.0.0.1:7861${RESET} 访问。"
+    success "LAN 共享已启动：$mode_text。"
+    echo -e "API: ${GREEN}http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT/v1${RESET}"
+    if [[ "$GCLI_PROXY_MODE" == "full" ]]; then
+        echo -e "控制面板: ${GREEN}http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT${RESET}"
+        echo -e "请使用菜单 [查看本机访问密码] 中的随机面板密码登录。"
+    else
+        echo -e "控制面板仍只能从 ${GREEN}http://127.0.0.1:7861${RESET} 访问。"
+    fi
     pause
 }
 
 gcli_proxy_disable() {
     gcli_proxy_load_settings >/dev/null 2>&1 || gcli_proxy_defaults
-    if gcli_proxy_is_running && ! gcli_proxy_stop_impl; then
-        err "无法安全停止属于 ST-Manager 的 Nginx 进程。"
+    if gcli_proxy_is_running; then
+        if ! gcli_proxy_stop_impl; then
+            err "无法安全停止属于 ST-Manager 的 Nginx 进程。"
+            pause
+            return
+        fi
+        success "当前 LAN 共享已停止；127.0.0.1:7861 不受影响。"
+    else
+        warn "LAN 共享当前未运行。"
+    fi
+    if [[ "$GCLI_PROXY_AUTO_START" == "true" ]]; then
+        echo -e "${YELLOW}跟随启动仍为开启；下次启动 gcli2api 时会再次启动共享。${RESET}"
+    fi
+    pause
+}
+
+gcli_proxy_toggle_mode() {
+    local old_mode target_mode confirm was_running=false
+    if ! gcli_proxy_load_settings; then
+        err "LAN API 共享配置无效。"
         pause
         return
     fi
-    GCLI_PROXY_ENABLED=false
-    if gcli_proxy_save_settings; then
-        success "LAN API 共享已关闭；127.0.0.1:7861 不受影响。"
+    old_mode="$GCLI_PROXY_MODE"
+    if [[ "$old_mode" == "api" ]]; then
+        target_mode="full"
+        echo -e "${YELLOW}完整转发会向 $GCLI_PROXY_ALLOW_CIDR 开放控制面板和凭证管理。${RESET}"
+        echo -e "虽然仍有随机面板密码保护，但传输是未加密的 HTTP。"
+        read -rp "确认切换到完整转发？(y/N): " confirm
+        [[ "$confirm" =~ ^[Yy]$ ]] || return
     else
-        err "无法保存关闭状态。"
+        target_mode="api"
+    fi
+
+    if gcli_proxy_is_running; then
+        was_running=true
+        if ! gcli_proxy_stop_impl; then
+            err "无法安全停止 Nginx，模式未修改。"
+            pause
+            return
+        fi
+    fi
+
+    GCLI_PROXY_MODE="$target_mode"
+    if ! gcli_proxy_save_settings; then
+        GCLI_PROXY_MODE="$old_mode"
+        if [[ "$was_running" == "true" ]]; then
+            gcli_proxy_start_impl >/dev/null 2>&1 || true
+        fi
+        err "无法保存共享模式；已保留原配置。"
+        pause
+        return
+    fi
+
+    if [[ "$was_running" == "true" ]] && ! gcli_proxy_start_impl; then
+        GCLI_PROXY_MODE="$old_mode"
+        gcli_proxy_save_settings >/dev/null 2>&1 || true
+        gcli_proxy_start_impl >/dev/null 2>&1 || true
+        err "新模式启动失败；已尝试恢复原模式。"
+        [[ -f "$GCLI_PROXY_ERROR_LOG" ]] && tail -n 20 "$GCLI_PROXY_ERROR_LOG"
+        pause
+        return
+    fi
+
+    success "共享模式已切换为：$(gcli_proxy_mode_text)。"
+    pause
+}
+
+gcli_proxy_toggle_auto_start() {
+    if ! gcli_proxy_load_settings; then
+        err "LAN API 共享配置无效。"
+        pause
+        return
+    fi
+    if [[ "$GCLI_PROXY_AUTO_START" == "true" ]]; then
+        GCLI_PROXY_AUTO_START=false
+    else
+        GCLI_PROXY_AUTO_START=true
+    fi
+    if ! gcli_proxy_save_settings; then
+        err "无法保存跟随启动设置。"
+        pause
+        return
+    fi
+    if [[ "$GCLI_PROXY_AUTO_START" == "true" ]]; then
+        success "已开启：启动 gcli2api 时一同启动 LAN 共享。"
+        gcli_proxy_is_running || echo -e "${YELLOW}当前未启动；可选择菜单 1 立即启动共享。${RESET}"
+    else
+        success "已关闭跟随启动；当前运行状态不受影响。"
     fi
     pause
 }
@@ -567,53 +816,68 @@ gcli_proxy_logs() {
 }
 
 gcli_lan_proxy_menu() {
-    local choice state
+    local choice state mode_text auto_text
     while true; do
         gcli_proxy_load_settings >/dev/null 2>&1 || gcli_proxy_defaults
         if gcli_proxy_is_running; then
             state="${GREEN}运行中${RESET}"
-        elif [[ "$GCLI_PROXY_ENABLED" == "true" ]]; then
-            state="${YELLOW}已启用但未运行${RESET}"
         else
-            state="${RED}已关闭${RESET}"
+            state="${RED}已停止${RESET}"
+        fi
+        mode_text=$(gcli_proxy_mode_text)
+        if [[ "$GCLI_PROXY_AUTO_START" == "true" ]]; then
+            auto_text="${GREEN}开启${RESET}"
+        else
+            auto_text="${BLUE}关闭${RESET}"
         fi
         clear
         echo -e "${BLUE}=== LAN API 共享（Nginx）===${RESET}"
         echo -e "状态: $state"
+        echo -e "模式: $mode_text"
+        echo -e "跟随 gcli2api 启动: $auto_text"
         echo -e "地址: $GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT"
         echo -e "允许: $GCLI_PROXY_ALLOW_CIDR"
         echo -e "${BLUE}----------------------------------------------${RESET}"
-        echo -e "  ${GREEN}1)${RESET} 启用/启动共享"
-        echo -e "  ${GREEN}2)${RESET} 关闭共享"
-        echo -e "  ${GREEN}3)${RESET} 设置 IP、端口和允许网段"
-        echo -e "  ${GREEN}4)${RESET} 查看 Nginx 错误日志"
+        echo -e "  ${GREEN}1)${RESET} 立即启动共享"
+        echo -e "  ${GREEN}2)${RESET} 停止当前共享"
+        echo -e "  ${GREEN}3)${RESET} 切换共享模式"
+        echo -e "  ${GREEN}4)${RESET} 切换跟随启动"
+        echo -e "  ${GREEN}5)${RESET} 设置 IP、端口和允许网段"
+        echo -e "  ${GREEN}6)${RESET} 查看 Nginx 错误日志"
         echo -e "  ${RED}0)${RESET} 返回"
-        read_menu_choice "请选择 [0-4]: " 4 || return
+        read_menu_choice "请选择 [0-6]: " 6 || return
         choice="$REPLY"
         case "$choice" in
             1) gcli_proxy_enable ;;
             2) gcli_proxy_disable ;;
-            3) gcli_proxy_configure ;;
-            4) gcli_proxy_logs ;;
+            3) gcli_proxy_toggle_mode ;;
+            4) gcli_proxy_toggle_auto_start ;;
+            5) gcli_proxy_configure ;;
+            6) gcli_proxy_logs ;;
             0) return ;;
         esac
     done
 }
 
 gcli_show_credentials() {
-    if ! gcli_ensure_secrets; then
-        err "无法读取或生成 gcli2api 密码。"
+    if ! gcli_read_stored_passwords; then
+        err "无法读取 gcli2api 当前密码。"
         pause
         return
     fi
     echo -e "${YELLOW}请勿截图或分享以下密码。${RESET}"
     echo -e "API 地址: ${GREEN}http://127.0.0.1:7861/v1${RESET}"
-    echo -e "API 密码: ${GREEN}$GCLI_API_PASSWORD${RESET}"
+    printf 'API 密码: %b%s%b\n' "$GREEN" "$GCLI_API_PASSWORD" "$RESET"
     echo -e "控制面板: ${GREEN}http://127.0.0.1:7861${RESET}"
-    echo -e "面板密码: ${GREEN}$GCLI_PANEL_PASSWORD${RESET}"
-    if gcli_proxy_load_settings >/dev/null 2>&1 && [[ "$GCLI_PROXY_ENABLED" == "true" ]]; then
+    printf '面板密码: %b%s%b\n' "$GREEN" "$GCLI_PANEL_PASSWORD" "$RESET"
+    if gcli_proxy_load_settings >/dev/null 2>&1 && gcli_proxy_is_running; then
         echo -e "LAN API: ${GREEN}http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT/v1${RESET}"
-        echo -e "允许网段: ${GREEN}$GCLI_PROXY_ALLOW_CIDR${RESET}（控制面板未开放）"
+        if [[ "$GCLI_PROXY_MODE" == "full" ]]; then
+            echo -e "LAN 面板: ${GREEN}http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT${RESET}"
+            echo -e "允许网段: ${GREEN}$GCLI_PROXY_ALLOW_CIDR${RESET}（完整转发）"
+        else
+            echo -e "允许网段: ${GREEN}$GCLI_PROXY_ALLOW_CIDR${RESET}（控制面板未开放）"
+        fi
     fi
     pause
 }
@@ -811,8 +1075,8 @@ gcli_install() {
     fi
     rm -rf -- "$stage_dir"
 
-    if ! gcli_ensure_secrets; then
-        err "随机密码生成失败；服务未启动。"
+    if ! gcli_ensure_stored_passwords; then
+        err "随机密码初始化失败；服务未启动。"
         pause
         return
     fi
@@ -830,7 +1094,7 @@ gcli_start_impl() {
     local python_bin="$GCLI_DIR/.venv/bin/python" pid
     [[ -x "$python_bin" && -f "$GCLI_DIR/web.py" ]] || return 1
     gcli_python_smoke_test >/dev/null 2>&1 || return 1
-    gcli_ensure_secrets || return 1
+    gcli_ensure_stored_passwords || return 1
 
     if is_gcli_running; then
         gcli_proxy_start_if_enabled || true
@@ -842,27 +1106,25 @@ gcli_start_impl() {
 
     if command -v pm2 >/dev/null 2>&1; then
         if gcli_pm2_owned "$GCLI_PM2_NAME"; then
-            env HOST=127.0.0.1 PORT=7861 \
-                "POSTGRESQL_URI=" \
-                "API_PASSWORD=$GCLI_API_PASSWORD" \
-                "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
-                "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
-                pm2 restart "$GCLI_PM2_NAME" --update-env >/dev/null || return 1
-        else
-            env HOST=127.0.0.1 PORT=7861 \
-                "POSTGRESQL_URI=" \
-                "API_PASSWORD=$GCLI_API_PASSWORD" \
-                "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
-                "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
-                pm2 start "$python_bin" --name "$GCLI_PM2_NAME" --cwd "$GCLI_DIR" -- web.py >/dev/null || return 1
+            # Recreate the owned PM2 entry so --update-env cannot retain the
+            # old API_PASSWORD/PANEL_PASSWORD/PASSWORD variables.
+            pm2 delete "$GCLI_PM2_NAME" >/dev/null 2>&1 || return 1
         fi
+        (
+            unset API_PASSWORD PANEL_PASSWORD PASSWORD
+            env HOST=127.0.0.1 PORT=7861 \
+                "POSTGRESQL_URI=" \
+                "MONGODB_URI=" \
+                "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
+                pm2 start "$python_bin" --name "$GCLI_PM2_NAME" --cwd "$GCLI_DIR" -- web.py >/dev/null
+        ) || return 1
     else
         (
             cd "$GCLI_DIR" || exit 1
+            unset API_PASSWORD PANEL_PASSWORD PASSWORD
             exec nohup env HOST=127.0.0.1 PORT=7861 \
                 "POSTGRESQL_URI=" \
-                "API_PASSWORD=$GCLI_API_PASSWORD" \
-                "PANEL_PASSWORD=$GCLI_PANEL_PASSWORD" \
+                "MONGODB_URI=" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
                 "$python_bin" web.py
         ) >> "$GCLI_DIR/gcli.log" 2>&1 &
@@ -912,4 +1174,3 @@ gcli_logs() {
     fi
     pause
 }
-
