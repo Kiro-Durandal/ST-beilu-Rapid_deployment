@@ -177,7 +177,7 @@ load_modules() {
                 text=$(echo "$text" | tr -d '\r')
                 MENU_TEXTS["$key"]="$text"
                 FUNCTION_MAP["$key"]="$key"
-                if [[ -z "${MODULE_GROUP_ORDER[$current_group]}" ]]; then
+                if [[ -z "${MODULE_GROUP_ORDER[$current_group]:-}" ]]; then
                     MODULE_GROUP_ORDER["$current_group"]="$key"
                 else
                     MODULE_GROUP_ORDER["$current_group"]="${MODULE_GROUP_ORDER[$current_group]} $key"
@@ -194,7 +194,7 @@ load_modules() {
         MENU_TEXTS["$key"]="$text"
         FUNCTION_MAP["$key"]="$key"
     done
-    MODULE_GROUP_ORDER["$sys_group"]="fix_env update_self settings_menu visit_github visit_discord"
+    MODULE_GROUP_ORDER["$sys_group"]="fix_env update_self settings_menu autostart_menu visit_github visit_discord"
 }
 
 # ==============================================================================
@@ -817,7 +817,7 @@ show_group_menu() {
 
         i=1
         declare -A active_options=()
-        if [[ -n "${MODULE_GROUP_ORDER[$group_name]}" ]]; then
+        if [[ -n "${MODULE_GROUP_ORDER[$group_name]:-}" ]]; then
             for key in ${MODULE_GROUP_ORDER[$group_name]}; do
                 echo -e "  ${GREEN}$i)${RESET} ${MENU_TEXTS[$key]}"
                 active_options[$i]="$key"
