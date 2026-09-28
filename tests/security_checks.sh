@@ -32,6 +32,10 @@ grep -Fq 'MONGODB_URI=' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'start_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'stop_all_services()' "$ROOT/ST-Manager/core.sh"
+grep -Fq 'autostart_menu:开机自启动' "$ROOT/ST-Manager/core.sh"
+grep -Fq 'exec bash "$CORE_FILE" --boot-start' "$ROOT/ST-Manager/core.sh"
+grep -Fq 'gcli_proxy_start_if_enabled || true' "$ROOT/ST-Manager/core.sh"
+grep -Fq '已要求 Nginx 跟随启动，但启动或验证失败。' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'read_menu_choice()' "$ROOT/ST-Manager/core.sh"
 grep -Fqx 'ST_MANAGER_SECURITY_PROFILE="termux-loopback-secrets-v1"' \
     "$ROOT/ST-Manager/core.sh"
@@ -138,6 +142,63 @@ grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
     gcli_proxy_write_nginx_config
     grep -Fq 'Full forwarding exposes' "$GCLI_PROXY_CONF"
     ! grep -Fq 'return 403;' "$GCLI_PROXY_CONF"
+)
+
+(
+    autostart_test_root=$(mktemp -d)
+    trap 'rm -rf -- "$autostart_test_root"' EXIT
+    source "$ROOT/ST-Manager/core.sh"
+
+    ST_MANAGER_STATE_DIR="$autostart_test_root/config"
+    AUTOSTART_CONFIG_FILE="$ST_MANAGER_STATE_DIR/autostart.conf"
+    AUTOSTART_BOOT_DIR="$autostart_test_root/boot"
+    AUTOSTART_BOOT_SCRIPT="$AUTOSTART_BOOT_DIR/20-st-manager"
+    AUTOSTART_LOG_FILE="$ST_MANAGER_STATE_DIR/boot.log"
+
+    AUTOSTART_MODE="both"
+    autostart_save_config
+    autostart_defaults
+    autostart_load_config
+    [[ "$AUTOSTART_MODE" == "both" ]]
+
+    autostart_write_boot_script
+    autostart_script_owned
+    grep -Fq 'exec bash "$CORE_FILE" --boot-start' "$AUTOSTART_BOOT_SCRIPT"
+    grep -Fq 'sleep 30' "$AUTOSTART_BOOT_SCRIPT"
+
+    GCLI_DIR="$autostart_test_root/gcli2api"
+    ST_DIR="$autostart_test_root/SillyTavern"
+    GCLI_PROXY_ERROR_LOG="$autostart_test_root/nginx-error.log"
+    mkdir -p "$GCLI_DIR" "$ST_DIR"
+    : > "$GCLI_DIR/web.py"
+    : > "$ST_DIR/server.js"
+
+    sleep() { :; }
+    gcli_start_impl() {
+        : > "$autostart_test_root/gcli.started"
+        return 0
+    }
+    gcli_proxy_load_settings() {
+        GCLI_PROXY_AUTO_START=true
+        return 0
+    }
+    gcli_proxy_is_running() {
+        [[ -f "$autostart_test_root/nginx.started" ]]
+    }
+    gcli_proxy_start_if_enabled() {
+        : > "$autostart_test_root/nginx.started"
+        return 0
+    }
+    is_st_running() { return 1; }
+    st_start_impl() {
+        : > "$autostart_test_root/st.started"
+        return 0
+    }
+
+    boot_start_services
+    [[ -f "$autostart_test_root/gcli.started" ]]
+    [[ -f "$autostart_test_root/nginx.started" ]]
+    [[ -f "$autostart_test_root/st.started" ]]
 )
 
 echo "ST-Manager security checks passed."
