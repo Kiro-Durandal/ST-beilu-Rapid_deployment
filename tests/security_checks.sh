@@ -33,6 +33,8 @@ grep -Fq 'MONGODB_URI=' \
 grep -Fq 'start_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'stop_all_services()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'autostart_menu:开机自启动' "$ROOT/ST-Manager/core.sh"
+grep -Fq 'MODULE_GROUP_ORDER["$sys_group"]="fix_env update_self settings_menu autostart_menu visit_github visit_discord"' \
+    "$ROOT/ST-Manager/core.sh"
 grep -Fq 'exec bash "$CORE_FILE" --boot-start' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'gcli_proxy_start_if_enabled || true' "$ROOT/ST-Manager/core.sh"
 grep -Fq '已要求 Nginx 跟随启动，但启动或验证失败。' "$ROOT/ST-Manager/core.sh"
@@ -148,6 +150,9 @@ grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
     autostart_test_root=$(mktemp -d)
     trap 'rm -rf -- "$autostart_test_root"' EXIT
     source "$ROOT/ST-Manager/core.sh"
+
+    load_modules
+    [[ " ${MODULE_GROUP_ORDER[系统管理]} " == *" autostart_menu "* ]]
 
     ST_MANAGER_STATE_DIR="$autostart_test_root/config"
     AUTOSTART_CONFIG_FILE="$ST_MANAGER_STATE_DIR/autostart.conf"
