@@ -14,7 +14,13 @@ if grep -R -n -F -e 'pkill -f' -e 'nodejs-lts' -e 'master/termux-install.sh' \
     exit 1
 fi
 
-grep -Fq 'GCLI_COMMIT="87f56c8cb088f25c58d947d54424cc889ae7c9aa"' \
+grep -Fq 'GCLI_COMMIT="8048180939e499c35edce7999eb4b4ac2d2b8d1a"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'GCLI_WEB_SHA256="27201103ddd0a564d7be2838f9f3ab0c8253f6b048e46c39371991cabbe9246e"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'GCLI_REQUIREMENTS_SHA256="c54644f73c84e85263bb0d00630b3c06cef57535631a360756bd485ecffe30d6"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'GCLI_UPSTREAM_REF="refs/heads/master"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'GCLI_FASTAPI_VERSION="0.118.3"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
@@ -77,6 +83,14 @@ fi
 grep -Fq 'validate_proxy_url()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'gcli_lan_proxy_menu=LAN API 共享（Nginx）' \
     "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
+grep -Fq 'gcli_update_upstream=检查/同步上游最新版（高级）' \
+    "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
+grep -Fq 'git ls-remote --exit-code "$GCLI_REPO" "$GCLI_UPSTREAM_REF"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'git -C "$source_dir" fsck --strict --no-dangling' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq '确认风险并同步请输入 UPDATE' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'GCLI_PROXY_BIND_IP="192.168.0.1"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'GCLI_PROXY_BIND_PORT=7861' \
@@ -139,11 +153,26 @@ grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
     gcli_proxy_write_nginx_config
     grep -Fq 'return 403;' "$GCLI_PROXY_CONF"
     ! grep -Fq 'Full forwarding exposes' "$GCLI_PROXY_CONF"
+    ! grep -Fq 'location = /logs/stream' "$GCLI_PROXY_CONF"
+    ! grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$GCLI_PROXY_CONF"
 
     GCLI_PROXY_MODE="full"
     gcli_proxy_write_nginx_config
     grep -Fq 'Full forwarding exposes' "$GCLI_PROXY_CONF"
     ! grep -Fq 'return 403;' "$GCLI_PROXY_CONF"
+    grep -Fq 'location = /logs/stream' "$GCLI_PROXY_CONF"
+    grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$GCLI_PROXY_CONF"
+    grep -Fq 'proxy_set_header Connection "upgrade";' "$GCLI_PROXY_CONF"
+)
+
+(
+    source "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+    expected_commit="0123456789abcdef0123456789abcdef01234567"
+    git() {
+        [[ "$*" == "ls-remote --exit-code $GCLI_REPO $GCLI_UPSTREAM_REF" ]] || return 1
+        printf '%s\t%s\n' "$expected_commit" "$GCLI_UPSTREAM_REF"
+    }
+    [[ "$(gcli_resolve_upstream_head)" == "$expected_commit" ]]
 )
 
 (

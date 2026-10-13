@@ -2,9 +2,10 @@
 
 GCLI_DIR="$HOME/gcli2api"
 GCLI_REPO="https://github.com/su-kaka/gcli2api.git"
+GCLI_UPSTREAM_REF="refs/heads/master"
 # 旧版管理器的一次性更新桥接标记；实际安装仍只使用下面的新提交。
 # GCLI_COMMIT="cdbaf37003a92de31b8a02512d43df3ed6de3411"
-GCLI_COMMIT="87f56c8cb088f25c58d947d54424cc889ae7c9aa"
+GCLI_COMMIT="8048180939e499c35edce7999eb4b4ac2d2b8d1a"
 GCLI_WEB_SHA256="27201103ddd0a564d7be2838f9f3ab0c8253f6b048e46c39371991cabbe9246e"
 GCLI_REQUIREMENTS_SHA256="c54644f73c84e85263bb0d00630b3c06cef57535631a360756bd485ecffe30d6"
 GCLI_FASTAPI_VERSION="0.118.3"
@@ -494,6 +495,22 @@ EOF
         cat >> "$temp_conf" <<EOF
         # Full forwarding exposes the authenticated control panel and
         # credential-management routes to the configured client CIDR.
+        # The live log viewer uses a WebSocket on this same port/path.
+        location = /logs/stream {
+            proxy_pass http://127.0.0.1:7861;
+            proxy_http_version 1.1;
+            proxy_set_header Host 127.0.0.1:7861;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_read_timeout 3600s;
+            proxy_send_timeout 3600s;
+        }
+
         location / {
             proxy_pass http://127.0.0.1:7861;
             proxy_http_version 1.1;
@@ -974,9 +991,32 @@ gcli_stop_impl() {
     [[ "$stopped" == "true" && "$proxy_failed" == "false" ]]
 }
 
-gcli_install() {
+gcli_installed_commit() {
+    local commit
+    [[ -d "$GCLI_DIR/.git" ]] || return 1
+    commit=$(git -C "$GCLI_DIR" rev-parse --verify HEAD 2>/dev/null) || return 1
+    [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+    printf '%s\n' "$commit"
+}
+
+gcli_resolve_upstream_head() {
+    local output commit ref
+    output=$(git ls-remote --exit-code "$GCLI_REPO" "$GCLI_UPSTREAM_REF" 2>/dev/null) || return 1
+    read -r commit ref <<< "$output"
+    [[ "$commit" =~ ^[0-9a-f]{40}$ && "$ref" == "$GCLI_UPSTREAM_REF" ]] || return 1
+    printf '%s\n' "$commit"
+}
+
+gcli_install_commit() {
+    local target_commit="$1" expected_web_sha="${2:-}" expected_requirements_sha="${3:-}"
+    local release_kind="${4:-reviewed}"
     local packages=() stage_dir source_dir backup_dir="" actual_commit was_running=false
     local compat_requirements
+    [[ "$target_commit" =~ ^[0-9a-f]{40}$ ]] || {
+        err "gcli2api 目标提交格式无效。"
+        pause
+        return
+    }
     [[ -n "${HOME:-}" && "$GCLI_DIR" == "$HOME/gcli2api" ]] || {
         err "gcli2api 目录安全检查失败。"
         pause
@@ -1005,10 +1045,14 @@ gcli_install() {
     }
     source_dir="$stage_dir/source"
 
-    echo -e "${BLUE}正在获取经过审核并锁定的 gcli2api 提交...${RESET}"
+    if [[ "$release_kind" == "reviewed" ]]; then
+        echo -e "${BLUE}正在获取经过审核并锁定的 gcli2api 提交...${RESET}"
+    else
+        echo -e "${BLUE}正在获取已确认的上游提交 ${target_commit:0:12}...${RESET}"
+    fi
     if ! git init -q "$source_dir" ||
        ! git -C "$source_dir" remote add origin "$GCLI_REPO" ||
-       ! git -C "$source_dir" fetch --depth 1 origin "$GCLI_COMMIT" ||
+       ! git -C "$source_dir" fetch --depth 1 origin "$target_commit" ||
        ! git -C "$source_dir" checkout --detach FETCH_HEAD; then
         rm -rf -- "$stage_dir"
         err "gcli2api 下载失败；当前安装未改动。"
@@ -1017,11 +1061,22 @@ gcli_install() {
     fi
 
     actual_commit=$(git -C "$source_dir" rev-parse HEAD 2>/dev/null)
-    if [[ "$actual_commit" != "$GCLI_COMMIT" ]] ||
-       ! gcli_verify_file "$source_dir/web.py" "$GCLI_WEB_SHA256" ||
-       ! gcli_verify_file "$source_dir/requirements-termux.txt" "$GCLI_REQUIREMENTS_SHA256"; then
+    if [[ "$actual_commit" != "$target_commit" ]] ||
+       [[ ! -f "$source_dir/web.py" || -L "$source_dir/web.py" ]] ||
+       [[ ! -f "$source_dir/requirements-termux.txt" || -L "$source_dir/requirements-termux.txt" ]] ||
+       [[ -e "$source_dir/.gitmodules" ]] ||
+       ! git -C "$source_dir" fsck --strict --no-dangling >/dev/null 2>&1; then
         rm -rf -- "$stage_dir"
-        err "提交或 SHA-256 校验失败；拒绝安装。"
+        err "提交或源码结构校验失败；拒绝安装。"
+        pause
+        return
+    fi
+    if [[ -n "$expected_web_sha" ]] && {
+        ! gcli_verify_file "$source_dir/web.py" "$expected_web_sha" ||
+        ! gcli_verify_file "$source_dir/requirements-termux.txt" "$expected_requirements_sha"
+    }; then
+        rm -rf -- "$stage_dir"
+        err "固定审核版的 SHA-256 校验失败；拒绝安装。"
         pause
         return
     fi
@@ -1081,13 +1136,62 @@ gcli_install() {
         return
     fi
 
-    success "gcli2api 已安装为审核过的固定提交 ${GCLI_COMMIT:0:12}。"
+    if [[ "$release_kind" == "reviewed" ]]; then
+        success "gcli2api 已安装为审核过的固定提交 ${target_commit:0:12}。"
+    else
+        success "gcli2api 已同步到上游提交 ${target_commit:0:12}。"
+    fi
     echo -e "${GREEN}Termux 兼容依赖: FastAPI $GCLI_FASTAPI_VERSION / Pydantic $GCLI_PYDANTIC_VERSION。${RESET}"
     echo -e "${GREEN}监听地址已强制设为 127.0.0.1，默认 pwd 已禁用。${RESET}"
     if [[ "$was_running" == "true" ]]; then
         gcli_start_impl || warn "更新完成，但自动重启失败。"
     fi
     gcli_show_credentials
+}
+
+gcli_install() {
+    gcli_install_commit \
+        "$GCLI_COMMIT" "$GCLI_WEB_SHA256" "$GCLI_REQUIREMENTS_SHA256" reviewed
+}
+
+gcli_update_upstream() {
+    local installed_commit="" latest_commit confirm
+    if [[ -z "${PREFIX:-}" || "$PREFIX" != *"com.termux"* ]]; then
+        err "gcli2api 更新仅支持 Termux。"
+        pause
+        return
+    fi
+    if ! command -v git >/dev/null 2>&1 && ! pkg install -y git; then
+        err "无法安装 Git，不能检查上游版本。"
+        pause
+        return
+    fi
+
+    echo -e "${BLUE}正在读取 gcli2api 上游 master 的精确提交号...${RESET}"
+    if ! latest_commit=$(gcli_resolve_upstream_head); then
+        err "无法读取上游版本；当前安装未改动。"
+        pause
+        return
+    fi
+    installed_commit=$(gcli_installed_commit 2>/dev/null || true)
+    echo -e "当前版本: ${GREEN}${installed_commit:-未安装}${RESET}"
+    echo -e "上游版本: ${GREEN}$latest_commit${RESET}"
+    echo -e "提交页面: https://github.com/su-kaka/gcli2api/commit/$latest_commit"
+    if [[ "$installed_commit" == "$latest_commit" ]]; then
+        success "当前已经是上游最新版。"
+        pause
+        return
+    fi
+
+    warn "高级同步会运行尚未经本 Fork 人工审核的上游代码。"
+    echo -e "仍会执行精确提交校验、Termux 依赖兼容处理、pip check、应用导入测试和失败回滚。"
+    read -rp "确认风险并同步请输入 UPDATE（其他内容取消）: " confirm
+    if [[ "$confirm" != "UPDATE" ]]; then
+        log "已取消；当前安装未改动。"
+        pause
+        return
+    fi
+    gcli_install_commit "$latest_commit" "" "" upstream
 }
 
 gcli_start_impl() {
