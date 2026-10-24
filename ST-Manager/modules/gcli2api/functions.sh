@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-GCLI_DIR="$HOME/gcli2api"
+AGY_REPO="https://github.com/su-kaka/agy2api.git"
+# Legacy identifiers below are an upgrade ABI, not the active upstream URL.
+# Installed pre-v1.9 manager updaters still validate this literal alias.
 GCLI_REPO="https://github.com/su-kaka/gcli2api.git"
-# This URL redirects to the same GitHub repository, now named su-kaka/agy2api.
-# Keep the historical URL for installed managers' update-validation bridge.
 GCLI_UPSTREAM_REF="refs/heads/master"
 # 旧版管理器的一次性更新桥接标记；实际安装仍只使用下面的新提交。
 # GCLI_COMMIT="cdbaf37003a92de31b8a02512d43df3ed6de3411"
@@ -17,13 +17,33 @@ GCLI_LEGACY_FASTAPI_VERSION="0.118.3"
 GCLI_LEGACY_PYDANTIC_VERSION="1.10.26"
 GCLI_COMPAT_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compat.py"
 GCLI_CONFIG_DIR="$HOME/.config/st-manager"
-GCLI_ENV_FILE="$GCLI_CONFIG_DIR/gcli2api.env"
+GCLI_DIR="$HOME/agy2api"
+GCLI_PATH_CONFLICT=false
+if [[ -e "$HOME/gcli2api" ]]; then
+    if [[ -e "$GCLI_DIR" ]]; then
+        GCLI_PATH_CONFLICT=true
+    else
+        # Never move an existing venv: its scripts contain absolute paths.
+        GCLI_DIR="$HOME/gcli2api"
+    fi
+fi
+GCLI_STORAGE_NAME="agy2api"
+if [[ "$GCLI_DIR" == "$HOME/gcli2api" ]] || {
+    [[ ! -e "$GCLI_CONFIG_DIR/agy2api.env" && ! -e "$GCLI_CONFIG_DIR/agy2api.pid" &&
+       ! -e "$GCLI_CONFIG_DIR/agy2api-lan.conf" && ! -d "$GCLI_CONFIG_DIR/agy2api-nginx" ]] &&
+    [[ -e "$GCLI_CONFIG_DIR/gcli2api.env" || -e "$GCLI_CONFIG_DIR/gcli2api.pid" ||
+       -e "$GCLI_CONFIG_DIR/gcli2api-lan.conf" || -d "$GCLI_CONFIG_DIR/gcli2api-nginx" ]]
+}; then
+    GCLI_STORAGE_NAME="gcli2api"
+fi
+GCLI_ENV_FILE="$GCLI_CONFIG_DIR/$GCLI_STORAGE_NAME.env"
 GCLI_CREDS_DIR="$GCLI_DIR/creds"
-GCLI_PID_FILE="$GCLI_CONFIG_DIR/gcli2api.pid"
-GCLI_PM2_NAME="st-manager-gcli2api"
+GCLI_PID_FILE="$GCLI_CONFIG_DIR/$GCLI_STORAGE_NAME.pid"
+GCLI_PM2_NAME="st-manager-$GCLI_STORAGE_NAME"
+GCLI_PREVIOUS_PM2_NAME="st-manager-gcli2api"
 GCLI_LEGACY_PM2_NAME="web"
-GCLI_PROXY_SETTINGS_FILE="$GCLI_CONFIG_DIR/gcli2api-lan.conf"
-GCLI_PROXY_ROOT="$GCLI_CONFIG_DIR/gcli2api-nginx"
+GCLI_PROXY_SETTINGS_FILE="$GCLI_CONFIG_DIR/$GCLI_STORAGE_NAME-lan.conf"
+GCLI_PROXY_ROOT="$GCLI_CONFIG_DIR/$GCLI_STORAGE_NAME-nginx"
 GCLI_PROXY_CONF="$GCLI_PROXY_ROOT/nginx.conf"
 GCLI_PROXY_PID_FILE="$GCLI_PROXY_ROOT/logs/nginx.pid"
 GCLI_PROXY_ERROR_LOG="$GCLI_PROXY_ROOT/logs/error.log"
@@ -57,14 +77,13 @@ gcli_pm2_running() {
 }
 
 gcli_running_pm2_name() {
-    if gcli_pm2_running "$GCLI_PM2_NAME"; then
-        echo "$GCLI_PM2_NAME"
-        return 0
-    fi
-    if gcli_pm2_running "$GCLI_LEGACY_PM2_NAME"; then
-        echo "$GCLI_LEGACY_PM2_NAME"
-        return 0
-    fi
+    local name
+    for name in "$GCLI_PM2_NAME" "$GCLI_PREVIOUS_PM2_NAME" "$GCLI_LEGACY_PM2_NAME"; do
+        if gcli_pm2_running "$name"; then
+            echo "$name"
+            return 0
+        fi
+    done
     return 1
 }
 
@@ -116,8 +135,11 @@ gcli_status_text() {
     else
         proxy_status="${BLUE}已停止（$mode_text，$auto_text）${RESET}"
     fi
-    echo -e "gcli2api   : ${GREEN}$ver${RESET} | $status"
+    echo -e "agy2api    : ${GREEN}$ver${RESET} | $status"
     echo -e "LAN API    : $proxy_status"
+    if [[ "$GCLI_PATH_CONFLICT" == "true" ]]; then
+        warn "同时发现 ~/agy2api 与 ~/gcli2api；为避免选错凭据，已禁止安装和启动。请先确认保留哪个目录。"
+    fi
 }
 
 gcli_load_secrets() {
@@ -367,7 +389,7 @@ gcli_proxy_save_settings() {
     gcli_proxy_validate_settings || return 1
     mkdir -p "$GCLI_CONFIG_DIR"
     chmod 700 "$GCLI_CONFIG_DIR"
-    temp_file=$(mktemp "$GCLI_CONFIG_DIR/.gcli2api-lan.XXXXXX") || return 1
+    temp_file=$(mktemp "$GCLI_CONFIG_DIR/.agy2api-lan.XXXXXX") || return 1
     {
         # ENABLED remains as a rollback-compatible alias for v1.4.
         printf 'ENABLED=%s\n' "$GCLI_PROXY_AUTO_START"
@@ -505,30 +527,36 @@ EOF
         cat >> "$temp_conf" <<EOF
         # Full forwarding exposes the authenticated control panel and
         # credential-management routes to the configured client CIDR.
-        # The live log viewer uses a WebSocket on this same port/path.
+EOF
+        # Only legacy gcli2api has a WebSocket console. Modern agy2api's
+        # authenticated /usage-logs routes use the normal full-forwarding path.
+        if [[ ! -f "$GCLI_DIR/src/storage/database.py" ]]; then
+            cat >> "$temp_conf" <<'EOF'
         location = /logs/stream {
             proxy_pass http://127.0.0.1:7861;
             proxy_http_version 1.1;
             proxy_set_header Host 127.0.0.1:7861;
-            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "upgrade";
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
             proxy_buffering off;
             proxy_cache off;
             proxy_read_timeout 3600s;
             proxy_send_timeout 3600s;
         }
-
+EOF
+        fi
+        cat >> "$temp_conf" <<'EOF'
         location / {
             proxy_pass http://127.0.0.1:7861;
             proxy_http_version 1.1;
             proxy_set_header Host 127.0.0.1:7861;
             proxy_set_header Connection "";
-            proxy_set_header X-Real-IP \$remote_addr;
-            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
             proxy_buffering off;
             proxy_request_buffering off;
             proxy_cache off;
@@ -564,7 +592,7 @@ gcli_proxy_start_impl() {
         return 1
     fi
     if ! is_gcli_running; then
-        gcli_proxy_log_diagnostic "gcli2api 后端未运行。"
+        gcli_proxy_log_diagnostic "agy2api 后端未运行。"
         return 1
     fi
     if ! command -v nginx >/dev/null 2>&1; then
@@ -609,7 +637,7 @@ gcli_proxy_start_if_enabled() {
     }
     [[ "$GCLI_PROXY_AUTO_START" == "true" ]] || return 0
     if ! gcli_proxy_start_impl; then
-        warn "gcli2api 已运行，但 LAN API 共享启动失败。"
+        warn "agy2api 已运行，但 LAN API 共享启动失败。"
         return 1
     fi
 }
@@ -713,9 +741,9 @@ gcli_proxy_enable() {
             ;;
     esac
     if ! is_gcli_running; then
-        log "正在先启动本机 gcli2api 后端..."
+        log "正在先启动本机 agy2api 后端..."
         if ! gcli_start_impl; then
-            err "gcli2api 后端启动失败，未开放 LAN API。"
+            err "agy2api 后端启动失败，未开放 LAN API。"
             pause
             return
         fi
@@ -731,7 +759,7 @@ gcli_proxy_enable() {
     echo -e "API: ${GREEN}http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT/v1${RESET}"
     if [[ "$GCLI_PROXY_MODE" == "full" ]]; then
         echo -e "控制面板: ${GREEN}http://$GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT${RESET}"
-        echo -e "请使用菜单 [查看本机访问密码] 中的随机面板密码登录。"
+        echo -e "请使用菜单 [查看访问地址与密码] 中的随机面板密码登录。"
     else
         echo -e "控制面板仍只能从 ${GREEN}http://127.0.0.1:7861${RESET} 访问。"
     fi
@@ -751,7 +779,7 @@ gcli_proxy_disable() {
         warn "LAN 共享当前未运行。"
     fi
     if [[ "$GCLI_PROXY_AUTO_START" == "true" ]]; then
-        echo -e "${YELLOW}跟随启动仍为开启；下次启动 gcli2api 时会再次启动共享。${RESET}"
+        echo -e "${YELLOW}跟随启动仍为开启；下次启动 agy2api 时会再次启动共享。${RESET}"
     fi
     pause
 }
@@ -825,7 +853,7 @@ gcli_proxy_toggle_auto_start() {
         return
     fi
     if [[ "$GCLI_PROXY_AUTO_START" == "true" ]]; then
-        success "已开启：启动 gcli2api 时一同启动 LAN 共享。"
+        success "已开启：启动 agy2api 时一同启动 LAN 共享。"
         gcli_proxy_is_running || echo -e "${YELLOW}当前未启动；可选择菜单 1 立即启动共享。${RESET}"
     else
         success "已关闭跟随启动；当前运行状态不受影响。"
@@ -861,7 +889,7 @@ gcli_lan_proxy_menu() {
         echo -e "${BLUE}=== LAN API 共享（Nginx）===${RESET}"
         echo -e "状态: $state"
         echo -e "模式: $mode_text"
-        echo -e "跟随 gcli2api 启动: $auto_text"
+        echo -e "跟随 agy2api 启动: $auto_text"
         echo -e "地址: $GCLI_PROXY_BIND_IP:$GCLI_PROXY_BIND_PORT"
         echo -e "允许: $GCLI_PROXY_ALLOW_CIDR"
         echo -e "${BLUE}----------------------------------------------${RESET}"
@@ -888,7 +916,7 @@ gcli_lan_proxy_menu() {
 
 gcli_show_credentials() {
     if ! gcli_read_stored_passwords; then
-        err "无法读取 gcli2api 当前密码。"
+        err "无法读取 agy2api 当前密码。"
         pause
         return
     fi
@@ -949,7 +977,7 @@ gcli_download_wheels() {
         err "预编译依赖检查失败（也可能是网络问题）；旧服务尚未停止。"
         python -c 'import platform, sys; print("Python:", sys.version.split()[0], "CPU:", platform.machine())'
         warn "新版需要 pydantic-core 和 greenlet 的匹配 Android 预编译包。"
-        warn "Python 3.14 / ARM64 可先选择 [准备 F50 预编译依赖（Termux/TUR）]。"
+        warn "Python 3.14 / ARM64 可在 [更新与维护] 中选择 [修复 F50 预编译依赖（Termux/TUR）]。"
         warn "请勿去掉 --only-binary 限制；那会重新触发可能耗尽 F50 内存的编译。"
         return 1
     fi
@@ -980,7 +1008,7 @@ gcli_prepare_native_wheels() {
     read -rp "确认使用以上来源准备预编译包？(y/N): " confirm
     [[ "$confirm" =~ ^[Yy]$ ]] || return
     if python "$native_script" "$GCLI_CONFIG_DIR/wheels"; then
-        success "预编译包已准备；请再次运行 [检查新版预编译依赖（不停服）]。"
+        success "预编译包已准备；可直接安装/更新，或在维护菜单中仅检查审核版兼容性。"
     else
         err "预编译包准备失败；当前后端和凭据未改动。"
     fi
@@ -1011,8 +1039,9 @@ gcli_stop_impl() {
         [[ -n "$name" ]] || continue
         pm2 stop "$name" >/dev/null 2>&1 && stopped=true
     done < <(
-        gcli_pm2_running "$GCLI_PM2_NAME" && echo "$GCLI_PM2_NAME"
-        gcli_pm2_running "$GCLI_LEGACY_PM2_NAME" && echo "$GCLI_LEGACY_PM2_NAME"
+        for name in "$GCLI_PM2_NAME" "$GCLI_PREVIOUS_PM2_NAME" "$GCLI_LEGACY_PM2_NAME"; do
+            gcli_pm2_running "$name" && echo "$name"
+        done
     )
 
     if pid=$(gcli_fallback_pid 2>/dev/null); then
@@ -1041,7 +1070,7 @@ gcli_installed_commit() {
 
 gcli_resolve_upstream_head() {
     local output commit ref
-    output=$(git ls-remote --exit-code "$GCLI_REPO" "$GCLI_UPSTREAM_REF" 2>/dev/null) || return 1
+    output=$(git ls-remote --exit-code "$AGY_REPO" "$GCLI_UPSTREAM_REF" 2>/dev/null) || return 1
     read -r commit ref <<< "$output"
     [[ "$commit" =~ ^[0-9a-f]{40}$ && "$ref" == "$GCLI_UPSTREAM_REF" ]] || return 1
     printf '%s\n' "$commit"
@@ -1084,17 +1113,18 @@ gcli_install_commit() {
     local packages=() stage_dir source_dir backup_dir="" actual_commit was_running=false
     local proxy_running=false requirements_file profile
     [[ "$target_commit" =~ ^[0-9a-f]{40}$ ]] || {
-        err "gcli2api 目标提交格式无效。"
+        err "agy2api 目标提交格式无效。"
         pause
         return
     }
-    [[ -n "${HOME:-}" && "$GCLI_DIR" == "$HOME/gcli2api" ]] || {
-        err "gcli2api 目录安全检查失败。"
+    [[ "$GCLI_PATH_CONFLICT" == "false" && -n "${HOME:-}" &&
+       ( "$GCLI_DIR" == "$HOME/agy2api" || "$GCLI_DIR" == "$HOME/gcli2api" ) ]] || {
+        err "agy2api 目录安全检查失败。"
         pause
         return
     }
     if [[ -z "${PREFIX:-}" || "$PREFIX" != *"com.termux"* ]]; then
-        err "gcli2api 安装仅支持 Termux。"
+        err "agy2api 安装仅支持 Termux。"
         pause
         return
     fi
@@ -1114,7 +1144,7 @@ gcli_install_commit() {
         return
     fi
 
-    stage_dir=$(mktemp -d "$HOME/.gcli2api-stage.XXXXXX") || {
+    stage_dir=$(mktemp -d "$HOME/.agy2api-stage.XXXXXX") || {
         err "无法创建临时目录。"
         pause
         return
@@ -1122,16 +1152,16 @@ gcli_install_commit() {
     source_dir="$stage_dir/source"
 
     if [[ "$release_kind" == "reviewed" ]]; then
-        echo -e "${BLUE}正在获取经过审核并锁定的 gcli2api 提交...${RESET}"
+        echo -e "${BLUE}正在获取经过审核并锁定的 agy2api 提交...${RESET}"
     else
         echo -e "${BLUE}正在获取已确认的上游提交 ${target_commit:0:12}...${RESET}"
     fi
     if ! git init -q "$source_dir" ||
-       ! git -C "$source_dir" remote add origin "$GCLI_REPO" ||
+       ! git -C "$source_dir" remote add origin "$AGY_REPO" ||
        ! git -C "$source_dir" fetch --depth 1 origin "$target_commit" ||
        ! git -C "$source_dir" checkout --detach FETCH_HEAD; then
         rm -rf -- "$stage_dir"
-        err "gcli2api 下载失败；当前安装未改动。"
+        err "agy2api 下载失败；当前安装未改动。"
         pause
         return
     fi
@@ -1168,6 +1198,14 @@ gcli_install_commit() {
         return
     fi
 
+    if [[ "$profile" == "agy2api" &&
+          ( ! -f "$source_dir/dist/index.html" || -L "$source_dir/dist/index.html" ) ]]; then
+        rm -rf -- "$stage_dir"
+        err "上游缺少已构建面板；不会在 F50 编译前端。旧服务尚未停止。"
+        pause
+        return
+    fi
+
     # Download ALL wheels before any service stop or installation-directory move.
     # Both this download and the offline install forbid source distributions.
     if ! gcli_download_wheels "$source_dir" "$stage_dir/wheels"; then
@@ -1195,8 +1233,8 @@ gcli_install_commit() {
     chmod 700 "$BACKUP_ROOT"
 
     if [[ -d "$GCLI_DIR" ]]; then
-        backup_dir="$BACKUP_ROOT/gcli2api-$(date +%Y%m%d_%H%M%S)-$$"
-        log "备份现有 gcli2api 到 $backup_dir"
+        backup_dir="$BACKUP_ROOT/agy2api-$(date +%Y%m%d_%H%M%S)-$$"
+        log "备份现有 agy2api 到 $backup_dir"
         if ! mv "$GCLI_DIR" "$backup_dir"; then
             rm -rf -- "$stage_dir"
             gcli_restore_running_state "$was_running" "$proxy_running" || true
@@ -1288,9 +1326,9 @@ gcli_install_commit() {
     rm -rf -- "$stage_dir"
 
     if [[ "$release_kind" == "reviewed" ]]; then
-        success "gcli2api 已安装为审核过的固定提交 ${target_commit:0:12}。"
+        success "agy2api 已安装为审核过的固定提交 ${target_commit:0:12}。"
     else
-        success "gcli2api 已同步到上游提交 ${target_commit:0:12}。"
+        success "agy2api 已同步到上游提交 ${target_commit:0:12}。"
     fi
     echo -e "${GREEN}Termux 兼容依赖: FastAPI $GCLI_ACTIVE_FASTAPI_VERSION / Pydantic $GCLI_ACTIVE_PYDANTIC_VERSION。${RESET}"
     echo -e "${GREEN}监听地址已强制设为 127.0.0.1，默认 pwd 已禁用。${RESET}"
@@ -1298,7 +1336,6 @@ gcli_install_commit() {
 }
 
 gcli_install() {
-    echo -e "${YELLOW}新版 agy2api 仅支持 Antigravity；GeminiCLI 已由上游移除。${RESET}"
     gcli_install_commit \
         "$GCLI_COMMIT" "$GCLI_WEB_SHA256" "$GCLI_REQUIREMENTS_SHA256" reviewed
 }
@@ -1311,7 +1348,7 @@ gcli_check_compatibility() {
 gcli_update_upstream() {
     local installed_commit="" latest_commit confirm
     if [[ -z "${PREFIX:-}" || "$PREFIX" != *"com.termux"* ]]; then
-        err "gcli2api 更新仅支持 Termux。"
+        err "agy2api 更新仅支持 Termux。"
         pause
         return
     fi
@@ -1321,7 +1358,7 @@ gcli_update_upstream() {
         return
     fi
 
-    echo -e "${BLUE}正在读取 gcli2api 上游 master 的精确提交号...${RESET}"
+    echo -e "${BLUE}正在读取 agy2api 上游 master 的精确提交号...${RESET}"
     if ! latest_commit=$(gcli_resolve_upstream_head); then
         err "无法读取上游版本；当前安装未改动。"
         pause
@@ -1330,7 +1367,10 @@ gcli_update_upstream() {
     installed_commit=$(gcli_installed_commit 2>/dev/null || true)
     echo -e "当前版本: ${GREEN}${installed_commit:-未安装}${RESET}"
     echo -e "上游版本: ${GREEN}$latest_commit${RESET}"
-    echo -e "提交页面: https://github.com/su-kaka/gcli2api/commit/$latest_commit"
+    echo -e "提交页面: https://github.com/su-kaka/agy2api/commit/$latest_commit"
+    if [[ -n "$installed_commit" ]]; then
+        echo -e "变更对比: https://github.com/su-kaka/agy2api/compare/$installed_commit...$latest_commit"
+    fi
     if [[ "$installed_commit" == "$latest_commit" ]]; then
         success "当前已经是上游最新版。"
         pause
@@ -1338,7 +1378,8 @@ gcli_update_upstream() {
     fi
 
     warn "高级同步会运行尚未经本 Fork 人工审核的上游代码。"
-    echo -e "仍会执行精确提交校验、Termux 依赖兼容处理、pip check、应用导入测试和失败回滚。"
+    echo -e "先验证上游声明与当前依赖锁兼容，再进行预编译下载和原生加载检查；不兼容时保持旧服务。"
+    echo -e "不会自动编译依赖或构建前端；通过检查也不能保证上游业务行为完全兼容。"
     read -rp "确认风险并同步请输入 UPDATE（其他内容取消）: " confirm
     if [[ "$confirm" != "UPDATE" ]]; then
         log "已取消；当前安装未改动。"
@@ -1350,6 +1391,7 @@ gcli_update_upstream() {
 
 gcli_start_impl() {
     local python_bin="$GCLI_DIR/.venv/bin/python" pid
+    [[ "$GCLI_PATH_CONFLICT" == "false" ]] || return 1
     [[ -x "$python_bin" && -f "$GCLI_DIR/web.py" ]] || return 1
     gcli_python_smoke_test >/dev/null 2>&1 || return 1
     gcli_ensure_stored_passwords || return 1
@@ -1385,7 +1427,7 @@ gcli_start_impl() {
                 "MONGODB_URI=" \
                 "CREDENTIALS_DIR=$GCLI_CREDS_DIR" \
                 "$python_bin" web.py
-        ) >> "$GCLI_DIR/gcli.log" 2>&1 &
+        ) >> "$GCLI_DIR/agy.log" 2>&1 &
         pid=$!
         printf '%s\n' "$pid" > "$GCLI_PID_FILE"
         chmod 600 "$GCLI_PID_FILE"
@@ -1399,10 +1441,10 @@ gcli_start_impl() {
 
 gcli_start() {
     if [[ ! -f "$GCLI_DIR/web.py" ]]; then
-        warn "未检测到 gcli2api，请先安装。"
+        warn "未检测到 agy2api，请先安装。"
     elif is_gcli_running; then
         gcli_proxy_start_if_enabled || true
-        warn "gcli2api 已经在运行。"
+        warn "agy2api 已经在运行。"
     elif gcli_start_impl; then
         success "启动成功；服务仅监听 127.0.0.1:7861。"
         echo -e "API 地址: ${GREEN}http://127.0.0.1:7861/v1${RESET}"
@@ -1414,15 +1456,16 @@ gcli_start() {
 
 gcli_stop() {
     if gcli_stop_impl; then
-        success "已停止 ST-Manager 管理的 gcli2api 进程。"
+        success "已停止 ST-Manager 管理的 agy2api 进程。"
     else
-        warn "未发现属于此安装目录的 gcli2api 进程。"
+        warn "未发现属于此安装目录的 agy2api 进程。"
     fi
     pause
 }
 
 gcli_logs() {
-    local name log_file="$GCLI_DIR/gcli.log"
+    local name log_file="$GCLI_DIR/agy.log"
+    [[ -f "$log_file" ]] || log_file="$GCLI_DIR/gcli.log"
     if name=$(gcli_running_pm2_name 2>/dev/null); then
         pm2 logs "$name" --lines 50 --nostream
     elif [[ -f "$log_file" ]]; then
@@ -1431,4 +1474,26 @@ gcli_logs() {
         warn "暂无日志。"
     fi
     pause
+}
+
+gcli_maintenance_menu() {
+    local choice
+    while true; do
+        clear
+        echo -e "${BLUE}=== agy2api 更新与维护 ===${RESET}"
+        echo -e "安装目录: $GCLI_DIR"
+        echo -e "审核版本: ${GCLI_COMMIT:0:12}；日常安装已自动执行停服前检查。"
+        echo -e "  ${GREEN}1)${RESET} 检查/同步上游最新版（需确认）"
+        echo -e "  ${GREEN}2)${RESET} 修复 F50 预编译依赖（Termux/TUR）"
+        echo -e "  ${GREEN}3)${RESET} 仅检查审核版兼容性（不停服）"
+        echo -e "  ${RED}0)${RESET} 返回"
+        read_menu_choice "请选择 [0-3]: " 3 || return
+        choice="$REPLY"
+        case "$choice" in
+            1) gcli_update_upstream ;;
+            2) gcli_prepare_native_wheels ;;
+            3) gcli_check_compatibility ;;
+            0) return ;;
+        esac
+    done
 }

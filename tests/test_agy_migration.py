@@ -99,8 +99,45 @@ class RequirementsTests(unittest.TestCase):
             with patch.dict(os.environ, GCLI_EXPECT_FASTAPI="0.162.0", GCLI_EXPECT_PYDANTIC="2.14.1"):
                 compat.requirements(root, output)
             self.assertEqual(output.read_text().splitlines(), [
-                "aiosqlite>=0.20.0", "fastapi==0.162.0", "pydantic==2.14.1", "sqlalchemy==2.1.6", "greenlet==3.5.6",
+                "aiosqlite>=0.20.0", "fastapi==0.162.0", "pydantic==2.14.1", "sqlalchemy[asyncio]==2.1.6",
+                "greenlet==3.5.6", "pydantic-core==2.50.1",
             ])
+
+    def modern_fixture(self, folder, line):
+        root = Path(folder)
+        (root / "src/storage").mkdir(parents=True)
+        (root / "src/storage/database.py").touch()
+        (root / "requirements.txt").write_text(line + "\n")
+        return root
+
+    def test_upstream_native_or_framework_version_conflicts_are_not_overridden(self):
+        for line in ("pydantic>=2.15", "pydantic-core>=2.51", "greenlet>=3.6", "SQLAlchemy<2.1", "fastapi!=0.162.0"):
+            with self.subTest(line=line), tempfile.TemporaryDirectory() as folder:
+                root = self.modern_fixture(folder, line)
+                output = root / "resolved.txt"
+                output.write_text("previous requirements\n")
+                with patch.dict(os.environ, GCLI_EXPECT_FASTAPI="0.162.0", GCLI_EXPECT_PYDANTIC="2.14.1"):
+                    with self.assertRaisesRegex(ValueError, "incompatible"):
+                        compat.requirements(root, output)
+                self.assertEqual(output.read_text(), "previous requirements\n")
+
+    def test_compatible_bounds_and_duplicate_extras_are_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = self.modern_fixture(folder, "pydantic[email]>=2.11,<3\npydantic>=2.12\nFastAPI~=0.162.0")
+            output = root / "resolved.txt"
+            with patch.dict(os.environ, GCLI_EXPECT_FASTAPI="0.162.0", GCLI_EXPECT_PYDANTIC="2.14.1"):
+                compat.requirements(root, output)
+            self.assertIn("pydantic[email]==2.14.1", output.read_text().splitlines())
+            self.assertEqual(output.read_text().count("pydantic["), 1)
+
+    def test_legacy_pydantic_patch_override_remains_supported(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "requirements-termux.txt").write_text("pydantic==1.10.22\n")
+            output = root / "resolved.txt"
+            with patch.dict(os.environ, GCLI_EXPECT_FASTAPI="0.118.3", GCLI_EXPECT_PYDANTIC="1.10.26"):
+                compat.requirements(root, output)
+            self.assertIn("pydantic==1.10.26", output.read_text().splitlines())
 
     def test_rejects_installer_directives(self):
         for line in ("-r other.txt", "--extra-index-url https://untrusted.invalid", "pkg @ https://untrusted.invalid/pkg.whl", "-e ."):

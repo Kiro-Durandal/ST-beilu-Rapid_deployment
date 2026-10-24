@@ -21,6 +21,10 @@ def profile(root):
 
 
 def requirements(root, output):
+    # pip is already required for binary-only dependency downloads. Use its
+    # vendored PEP 440 parser rather than guessing upstream version constraints.
+    from pip._vendor.packaging.requirements import Requirement
+
     kind = profile(root)
     source = Path(root) / ("requirements.txt" if kind == "agy2api" else "requirements-termux.txt")
     pins = {
@@ -28,8 +32,9 @@ def requirements(root, output):
         "pydantic": os.environ["GCLI_EXPECT_PYDANTIC"],
     }
     if kind == "agy2api":
-        pins.update(sqlalchemy="2.1.6", greenlet="3.5.6")
+        pins.update(sqlalchemy="2.1.6", greenlet="3.5.6", **{"pydantic-core": "2.50.1"})
     result = []
+    extras = {name: set() for name in pins}
     # Accept package specifiers only, never pip options, URLs or editable projects.
     pattern = re.compile(r"([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,.-]+\])?\s*([<>=!~0-9A-Za-z.,*+ -]*)")
     for line in source.read_text(encoding="utf-8").splitlines():
@@ -39,11 +44,22 @@ def requirements(root, output):
         match = pattern.fullmatch(line)
         if not match:
             raise ValueError("Unsupported dependency syntax; refusing an unreviewed installer directive")
-        name = match[1].lower().replace("_", "-")
-        if name == "asyncpg" or name in pins:
+        dependency = Requirement(line)
+        name = re.sub(r"[-_.]+", "-", dependency.name.lower())
+        if name in pins:
+            if kind == "agy2api" and not dependency.specifier.contains(pins[name], prereleases=True):
+                raise ValueError(
+                    f"Upstream requires {dependency}; tested F50 pin {name}=={pins[name]} is incompatible. "
+                    "Update the manager's reviewed dependency/native-wheel profile first; old service was not stopped"
+                )
+            extras[name].update(dependency.extras)
+            continue
+        if name == "asyncpg":
             continue
         result.append(line)
-    result.extend(f"{name}=={version}" for name, version in pins.items())
+    for name, version in pins.items():
+        suffix = "[" + ",".join(sorted(extras[name])) + "]" if extras[name] else ""
+        result.append(f"{name}{suffix}=={version}")
     Path(output).write_text("\n".join(result) + "\n", encoding="utf-8")
 
 

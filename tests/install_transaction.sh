@@ -8,12 +8,15 @@ run_case() (
     # The installer confines all mutations to this disposable fixture HOME.
     export HOME="$test_root/home"
     export PREFIX="/data/data/com.termux/files/usr"
-    mkdir -p "$HOME/gcli2api/creds"
-    printf 'old\n' > "$HOME/gcli2api/old-version"
+    backend_name="gcli2api"
+    [[ "$1" != "canonical-success" ]] || backend_name="agy2api"
+    mkdir -p "$HOME/$backend_name/creds"
+    printf 'old\n' > "$HOME/$backend_name/old-version"
     source "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
     BACKUP_ROOT="$HOME/backups"
     BLUE='' GREEN='' YELLOW='' RED='' RESET=''
     mode="$1"
+    [[ "$mode" != "canonical-success" ]] || mode="success"
     running=true
     export ST_MANAGER_TRANSACTION_MARKER="$test_root"
     export ST_MANAGER_TRANSACTION_MODE="$mode"
@@ -28,6 +31,10 @@ run_case() (
         elif [[ "${3:-}" == "checkout" ]]; then
             : > "$2/web.py"
             : > "$2/requirements.txt"
+            if [[ "$mode" != "missing-frontend" ]]; then
+                mkdir -p "$2/dist"
+                : > "$2/dist/index.html"
+            fi
         elif [[ "${3:-}" == "rev-parse" ]]; then
             printf '%s\n' "$GCLI_COMMIT"
         fi
@@ -56,7 +63,11 @@ run_case() (
     gcli_ensure_stored_passwords() { : > "$test_root/passwords"; return 0; }
     gcli_show_credentials() { :; }
     gcli_install_commit "$GCLI_COMMIT" "" "" upstream "${2:-}"
-    [[ -f "$test_root/preflight" ]]
+    if [[ "$mode" == "missing-frontend" ]]; then
+        [[ ! -f "$test_root/preflight" ]]
+    else
+        [[ -f "$test_root/preflight" ]]
+    fi
     if [[ "$mode" == "success" ]]; then
         [[ ! -f "$GCLI_DIR/old-version" && -f "$GCLI_DIR/web.py" ]]
         [[ -f "$test_root/passwords" && -f "$test_root/migration" ]]
@@ -66,7 +77,7 @@ run_case() (
     fi
     [[ "$running" == "true" ]]
     case "$mode" in
-        missing-wheel|check)
+        missing-wheel|missing-frontend|check)
             [[ ! -f "$test_root/stopped" && ! -f "$test_root/restored" ]]
             ;;
         startup-failure)
@@ -82,10 +93,12 @@ run_case() (
 )
 
 run_case missing-wheel
+run_case missing-frontend
 run_case check check
 run_case startup-failure
 run_case migration-failure
 run_case success
+run_case canonical-success
 
 run_native_case() (
     native_test_root=$(mktemp -d)

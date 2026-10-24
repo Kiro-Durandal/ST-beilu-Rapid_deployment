@@ -76,7 +76,7 @@ validate_hardened_release() {
     RELEASE_VALIDATION_ERROR=""
 
     if [[ ! -f "$core_file" || ! -f "$gcli_file" ]]; then
-        RELEASE_VALIDATION_ERROR="缺少 core.sh 或 gcli2api 模块"
+        RELEASE_VALIDATION_ERROR="缺少 core.sh 或 agy2api 模块"
         return 1
     fi
     if [[ ! -f "$root/modules/gcli2api/compat.py" || ! -f "$root/modules/gcli2api/native_wheels.py" ]]; then
@@ -87,14 +87,14 @@ validate_hardened_release() {
         RELEASE_VALIDATION_ERROR="安全基线标识缺失或不受支持"
         return 1
     fi
-    if ! grep -Fqx 'GCLI_REPO="https://github.com/su-kaka/gcli2api.git"' "$gcli_file" ||
+    if ! grep -Fqx 'AGY_REPO="https://github.com/su-kaka/agy2api.git"' "$gcli_file" ||
        ! grep -Eq '^GCLI_COMMIT="[0-9a-f]{40}"$' "$gcli_file"; then
-        RELEASE_VALIDATION_ERROR="gcli2api 来源或提交锁定格式无效"
+        RELEASE_VALIDATION_ERROR="agy2api 来源或提交锁定格式无效"
         return 1
     fi
     if ! grep -Eq '^GCLI_WEB_SHA256="[0-9a-f]{64}"$' "$gcli_file" ||
        ! grep -Eq '^GCLI_REQUIREMENTS_SHA256="[0-9a-f]{64}"$' "$gcli_file"; then
-        RELEASE_VALIDATION_ERROR="gcli2api 文件哈希约束缺失"
+        RELEASE_VALIDATION_ERROR="agy2api 文件哈希约束缺失"
         return 1
     fi
     if ! grep -Eq '^GCLI_FASTAPI_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$gcli_file" ||

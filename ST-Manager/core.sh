@@ -34,7 +34,7 @@ declare -A FUNCTION_MAP
 declare -A MODULE_GROUP_ORDER
 declare -A GROUP_TO_MODULE_MAP
 
-readonly MAIN_GROUP_ORDER=("SillyTavern 管理" "gcli2api 管理" "系统管理")
+readonly MAIN_GROUP_ORDER=("SillyTavern 管理" "agy2api 管理" "系统管理")
 
 log() { echo -e "${BLUE}[INFO] $1${RESET}"; }
 success() { echo -e "${GREEN}[SUCCESS] $1${RESET}"; }
@@ -241,7 +241,7 @@ validate_hardened_release() {
     RELEASE_VALIDATION_ERROR=""
 
     if [[ ! -f "$core_file" || ! -f "$gcli_file" ]]; then
-        RELEASE_VALIDATION_ERROR="缺少 core.sh 或 gcli2api 模块"
+        RELEASE_VALIDATION_ERROR="缺少 core.sh 或 agy2api 模块"
         return 1
     fi
     if [[ ! -f "$root/modules/gcli2api/compat.py" || ! -f "$root/modules/gcli2api/native_wheels.py" ]]; then
@@ -252,14 +252,14 @@ validate_hardened_release() {
         RELEASE_VALIDATION_ERROR="安全基线标识缺失或不受支持"
         return 1
     fi
-    if ! grep -Fqx 'GCLI_REPO="https://github.com/su-kaka/gcli2api.git"' "$gcli_file" ||
+    if ! grep -Fqx 'AGY_REPO="https://github.com/su-kaka/agy2api.git"' "$gcli_file" ||
        ! grep -Eq '^GCLI_COMMIT="[0-9a-f]{40}"$' "$gcli_file"; then
-        RELEASE_VALIDATION_ERROR="gcli2api 来源或提交锁定格式无效"
+        RELEASE_VALIDATION_ERROR="agy2api 来源或提交锁定格式无效"
         return 1
     fi
     if ! grep -Eq '^GCLI_WEB_SHA256="[0-9a-f]{64}"$' "$gcli_file" ||
        ! grep -Eq '^GCLI_REQUIREMENTS_SHA256="[0-9a-f]{64}"$' "$gcli_file"; then
-        RELEASE_VALIDATION_ERROR="gcli2api 文件哈希约束缺失"
+        RELEASE_VALIDATION_ERROR="agy2api 文件哈希约束缺失"
         return 1
     fi
     if ! grep -Eq '^GCLI_FASTAPI_VERSION="[0-9]+\.[0-9]+\.[0-9]+"$' "$gcli_file" ||
@@ -427,9 +427,9 @@ autostart_save_config() {
 
 autostart_mode_text() {
     case "$AUTOSTART_MODE" in
-        gcli) printf '仅 gcli2api' ;;
+        gcli) printf '仅 agy2api' ;;
         st) printf '仅 SillyTavern' ;;
-        both) printf 'SillyTavern + gcli2api' ;;
+        both) printf 'SillyTavern + agy2api' ;;
         *) printf '未知' ;;
     esac
 }
@@ -508,7 +508,7 @@ autostart_enable() {
         echo -e "请确认 Termux 与 Termux:Boot 均允许开机启动和后台运行。"
     fi
     if [[ "$AUTOSTART_MODE" == "gcli" || "$AUTOSTART_MODE" == "both" ]]; then
-        echo -e "gcli2api 启动后，Nginx 将继续服从 LAN 共享中的 [跟随启动] 开关。"
+        echo -e "agy2api 启动后，Nginx 将继续服从 LAN 共享中的 [跟随启动] 开关。"
     fi
     pause
 }
@@ -531,9 +531,9 @@ autostart_choose_mode() {
     autostart_load_config
     clear
     echo -e "${BLUE}=== 选择开机启动组件 ===${RESET}"
-    echo -e "1) 仅启动 gcli2api"
+    echo -e "1) 仅启动 agy2api"
     echo -e "2) 仅启动 SillyTavern"
-    echo -e "3) 同时启动 SillyTavern 与 gcli2api"
+    echo -e "3) 同时启动 SillyTavern 与 agy2api"
     echo -e "0) 返回"
     read_menu_choice "请选择 [0-3]: " 3 || return
     choice="$REPLY"
@@ -620,14 +620,14 @@ autostart_menu() {
 boot_start_gcli() {
     local retry_needed=false
     if [[ ! -f "$GCLI_DIR/web.py" ]]; then
-        err "gcli2api 尚未安装。"
+        err "agy2api 尚未安装。"
         return 1
     fi
     if ! gcli_start_impl; then
-        err "gcli2api 启动失败。"
+        err "agy2api 启动失败。"
         return 1
     fi
-    success "gcli2api 已启动。"
+    success "agy2api 已启动。"
 
     if ! gcli_proxy_load_settings; then
         err "LAN 共享配置无效；Nginx 未启动。"
@@ -647,7 +647,7 @@ boot_start_gcli() {
         if [[ "$retry_needed" == "true" ]]; then
             success "Nginx LAN 共享重试启动成功。"
         else
-            success "Nginx LAN 共享已随 gcli2api 启动。"
+            success "Nginx LAN 共享已随 agy2api 启动。"
         fi
         return 0
     fi
@@ -722,21 +722,21 @@ start_all_services() {
     clear
     echo -e "${BLUE}=== 一键启动全部组件 ===${RESET}"
 
-    echo -e "${BLUE}正在启动 gcli2api...${RESET}"
+    echo -e "${BLUE}正在启动 agy2api...${RESET}"
     if [[ ! -f "$GCLI_DIR/web.py" ]]; then
-        err "gcli2api 尚未安装。"
+        err "agy2api 尚未安装。"
         ((failures++))
     elif is_gcli_running; then
         if gcli_proxy_start_if_enabled; then
-            success "gcli2api 已在运行。"
+            success "agy2api 已在运行。"
         else
-            err "gcli2api 已运行，但 LAN API 共享启动失败。"
+            err "agy2api 已运行，但 LAN API 共享启动失败。"
             ((failures++))
         fi
     elif gcli_start_impl; then
-        success "gcli2api 启动成功。"
+        success "agy2api 启动成功。"
     else
-        err "gcli2api 启动失败，请查看其日志。"
+        err "agy2api 启动失败，请查看其日志。"
         ((failures++))
     fi
 
@@ -776,13 +776,13 @@ stop_all_services() {
         ((failures++))
     fi
 
-    echo -e "${BLUE}正在停止 gcli2api...${RESET}"
+    echo -e "${BLUE}正在停止 agy2api...${RESET}"
     if ! is_gcli_running && ! gcli_proxy_is_running; then
-        log "gcli2api 已经停止。"
+        log "agy2api 已经停止。"
     elif gcli_stop_impl; then
-        success "gcli2api 已停止。"
+        success "agy2api 已停止。"
     else
-        err "gcli2api 停止失败。"
+        err "agy2api 停止失败。"
         ((failures++))
     fi
 
@@ -800,7 +800,7 @@ stop_all_services() {
 show_banner() {
     clear
     echo -e "${BLUE}==============================================${RESET}"
-    echo -e "${GREEN}        与你之歌 v1.8（安全加固版）       ${RESET}"
+    echo -e "${GREEN}        与你之歌 v1.9（安全加固版）       ${RESET}"
     echo -e "${BLUE}==============================================${RESET}"
     echo -e "仅供学习与研究；请遵守相关服务条款和当地法律。"
     echo -e "${BLUE}==============================================${RESET}"

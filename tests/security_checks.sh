@@ -85,11 +85,9 @@ fi
 grep -Fq 'validate_proxy_url()' "$ROOT/ST-Manager/core.sh"
 grep -Fq 'gcli_lan_proxy_menu=LAN API 共享（Nginx）' \
     "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
-grep -Fq 'gcli_update_upstream=检查/同步上游最新版（高级）' \
+grep -Fq 'gcli_maintenance_menu=更新与维护' \
     "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
-grep -Fq 'gcli_prepare_native_wheels=准备 F50 预编译依赖（Termux/TUR）' \
-    "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
-grep -Fq 'git ls-remote --exit-code "$GCLI_REPO" "$GCLI_UPSTREAM_REF"' \
+grep -Fq 'git ls-remote --exit-code "$AGY_REPO" "$GCLI_UPSTREAM_REF"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'git -C "$source_dir" fsck --strict --no-dangling' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
@@ -176,13 +174,18 @@ grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
     gcli_proxy_write_nginx_config
     grep -Fq 'rewrite ^/antigravity/(.*)$ /$1 break;' "$GCLI_PROXY_CONF"
     grep -Fq 'return 403;' "$GCLI_PROXY_CONF"
+    GCLI_PROXY_MODE="full"
+    gcli_proxy_write_nginx_config
+    ! grep -Fq 'location = /logs/stream' "$GCLI_PROXY_CONF"
+    ! grep -Fq 'proxy_set_header Upgrade' "$GCLI_PROXY_CONF"
+    grep -Fq 'proxy_set_header X-Real-IP $remote_addr;' "$GCLI_PROXY_CONF"
 )
 
 (
     source "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
     expected_commit="0123456789abcdef0123456789abcdef01234567"
     git() {
-        [[ "$*" == "ls-remote --exit-code $GCLI_REPO $GCLI_UPSTREAM_REF" ]] || return 1
+        [[ "$*" == "ls-remote --exit-code $AGY_REPO $GCLI_UPSTREAM_REF" ]] || return 1
         printf '%s\t%s\n' "$expected_commit" "$GCLI_UPSTREAM_REF"
     }
     [[ "$(gcli_resolve_upstream_head)" == "$expected_commit" ]]
