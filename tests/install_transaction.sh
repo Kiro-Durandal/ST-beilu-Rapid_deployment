@@ -86,4 +86,47 @@ run_case check check
 run_case startup-failure
 run_case migration-failure
 run_case success
+
+run_native_case() (
+    native_test_root=$(mktemp -d)
+    trap 'rm -rf -- "$native_test_root"' EXIT
+    source "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+    export ST_NATIVE_TEST_MODE="$1"
+    export ST_NATIVE_TEST_MARKER="$native_test_root/events"
+    GCLI_CONFIG_DIR="$native_test_root/config"
+    mkdir -p "$native_test_root/source/src/storage"
+    : > "$native_test_root/source/src/storage/database.py"
+    log() { :; }; err() { :; }; warn() { :; }
+    gcli_write_compat_requirements() { :; }
+    python() {
+        if [[ "$2" == "venv" ]]; then
+            mkdir -p "$3/bin"
+            printf '%s\n' '#!/bin/sh' \
+                'if [[ "$1" == "-m" ]]; then' \
+                '  printf "install\n" >> "$ST_NATIVE_TEST_MARKER"' \
+                '  [[ "$ST_NATIVE_TEST_MODE" != "pip-failure" ]]' \
+                'else' \
+                '  printf "import\n" >> "$ST_NATIVE_TEST_MARKER"' \
+                '  [[ "$ST_NATIVE_TEST_MODE" != "import-failure" ]]' \
+                'fi' > "$3/bin/python"
+            chmod +x "$3/bin/python"
+        fi
+        return 0
+    }
+    if gcli_download_wheels "$native_test_root/source" "$native_test_root/wheels"; then
+        [[ "$ST_NATIVE_TEST_MODE" == "success" ]]
+    else
+        [[ "$ST_NATIVE_TEST_MODE" != "success" ]]
+    fi
+    grep -Fxq install "$ST_NATIVE_TEST_MARKER"
+    if [[ "$ST_NATIVE_TEST_MODE" == "pip-failure" ]]; then
+        ! grep -Fxq import "$ST_NATIVE_TEST_MARKER"
+    else
+        grep -Fxq import "$ST_NATIVE_TEST_MARKER"
+    fi
+)
+
+run_native_case success
+run_native_case pip-failure
+run_native_case import-failure
 echo "Installer transaction tests passed."

@@ -87,6 +87,8 @@ grep -Fq 'gcli_lan_proxy_menu=LAN API 共享（Nginx）' \
     "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
 grep -Fq 'gcli_update_upstream=检查/同步上游最新版（高级）' \
     "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
+grep -Fq 'gcli_prepare_native_wheels=准备 F50 预编译依赖（Termux/TUR）' \
+    "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
 grep -Fq 'git ls-remote --exit-code "$GCLI_REPO" "$GCLI_UPSTREAM_REF"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'git -C "$source_dir" fsck --strict --no-dangling' \

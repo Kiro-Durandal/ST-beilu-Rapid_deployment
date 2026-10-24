@@ -56,9 +56,15 @@ st-menu
 
 #### F50 迁移到 agy2api
 
-先选择 `gcli2api 管理 → 检查新版预编译依赖（不停服）`。该操作只下载并解析依赖，不停止旧服务、不移动安装目录、不修改凭据。缺少匹配 Python/CPU 的 wheel 或网络失败时会退出，并显示当前 Python 和 CPU 信息。
+先选择 `gcli2api 管理 → 检查新版预编译依赖（不停服）`。该操作下载并解析依赖，并在临时环境加载、测试 greenlet 与 Pydantic Core；不停止旧服务、不移动安装目录、不修改凭据。缺少匹配 Python/CPU 的 wheel、原生模块加载失败或网络失败时会退出，并显示错误。
 
-截至 2026-10-24，PyPI 的 `pydantic-core 2.50.1` 与 `greenlet 3.5.6` 未列出 Android wheel；Android ARM64 / Python 3.14 的交叉下载检查也未找到匹配的 Pydantic Core 包。因此默认 F50 环境很可能被依赖检查拦截，不能把桌面运行测试通过视为 F50 已支持。可选地把自己信任且匹配设备的预编译 wheel 放到 `~/.config/st-manager/wheels/`；管理器不会自动添加第三方软件源。缺包时请继续使用旧后端，不要删除 `--only-binary` 限制来强行编译。
+截至 2026-10-24，默认 PyPI 缺少这两个版本的 Android wheel，但 [Termux 官方仓库提供预编译 python-greenlet](https://github.com/termux/termux-packages/blob/master/packages/python-greenlet/build.sh)，[TUR 社区提供匹配的 Pydantic Core wheel](https://github.com/tur-pypi-dists/python3.14-pydantic_core/releases/tag/v2.50.1)。Python 3.14 / ARM64 可选择 `准备 F50 预编译依赖（Termux/TUR）` 并明确确认来源：
+
+- 从当前 Termux APT 下载 `python-greenlet 3.5.6`，校验 APT 元数据的 SHA-256，提取官方已编译文件并重新打包为 wheel；不执行包安装脚本、不编译。
+- 从固定 TUR 发布地址下载 `pydantic-core 2.50.1`，校验管理器中固定的 SHA-256。TUR 是第三方社区来源，确认前请考虑这项信任。
+- 保存到 `~/.config/st-manager/wheels/`，不改 Termux 软件源或 pip 全局索引。也可自行提供信任且匹配的 wheel。
+
+准备完成后，重新执行 `检查新版预编译依赖（不停服）`。只有设备上的真实原生模块加载测试通过才继续；桌面打包与依赖解析测试不能证明 F50 运行稳定。缺包或测试失败时请继续使用旧后端，不要删除 `--only-binary` 限制来强行编译。
 
 依赖检查通过后，再执行“安装/更新（固定审核版本）”：
 

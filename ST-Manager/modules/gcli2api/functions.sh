@@ -941,7 +941,7 @@ gcli_download_wheels() {
     local requirements="$source_dir/requirements-st-manager.txt"
     gcli_write_compat_requirements "$source_dir/requirements.txt" "$requirements" || return 1
     mkdir -p "$wheel_dir" || return 1
-    # Optional user-supplied Android wheels; never add a third-party index.
+    # Optional locally prepared/user-supplied Android wheels; never add a third-party index.
     [[ -d "$GCLI_CONFIG_DIR/wheels" ]] && extra_args=(--find-links "$GCLI_CONFIG_DIR/wheels")
     log "仅下载预编译依赖；缺少 Android wheel 时立即停止，不在 F50 编译。"
     if ! python -m pip download --only-binary=:all: --dest "$wheel_dir" \
@@ -949,9 +949,42 @@ gcli_download_wheels() {
         err "预编译依赖检查失败（也可能是网络问题）；旧服务尚未停止。"
         python -c 'import platform, sys; print("Python:", sys.version.split()[0], "CPU:", platform.machine())'
         warn "新版需要 pydantic-core 和 greenlet 的匹配 Android 预编译包。"
+        warn "Python 3.14 / ARM64 可先选择 [准备 F50 预编译依赖（Termux/TUR）]。"
         warn "请勿去掉 --only-binary 限制；那会重新触发可能耗尽 F50 内存的编译。"
         return 1
     fi
+    if [[ -f "$source_dir/src/storage/database.py" ]]; then
+        gcli_probe_native_wheels "$wheel_dir" || return 1
+    fi
+}
+
+gcli_probe_native_wheels() {
+    local wheel_dir="$1" probe_dir="$1/../native-probe"
+    log "在临时环境验证原生模块可加载；旧服务仍在运行。"
+    if ! python -m venv "$probe_dir" ||
+       ! "$probe_dir/bin/python" -m pip install --no-index --only-binary=:all: \
+            --find-links "$wheel_dir" 'greenlet==3.5.6' 'pydantic-core==2.50.1' 'typing-extensions>=4.16.0' ||
+       ! "$probe_dir/bin/python" -c 'import greenlet; from pydantic_core import SchemaValidator; assert greenlet.greenlet(lambda: 42).switch() == 42; assert SchemaValidator({"type": "int"}).validate_python("42") == 42'; then
+        err "原生模块加载失败；可能缺少运行库或 ABI 不匹配。旧服务未停止。"
+        return 1
+    fi
+}
+
+gcli_prepare_native_wheels() {
+    local confirm native_script
+    native_script="$(dirname "$GCLI_COMPAT_SCRIPT")/native_wheels.py"
+    echo -e "将为 Python 3.14 / Android ARM64 准备两个预编译包："
+    echo -e "  greenlet：从当前 Termux APT 下载 python-greenlet，核对 APT 的 SHA-256 后重新打包。"
+    echo -e "  pydantic-core：从 TUR 发布页下载 2.50.1，核对管理器中固定的 SHA-256。"
+    echo -e "TUR 是社区维护的来源；不会修改 pip 全局源，也不会安装或编译源码。"
+    read -rp "确认使用以上来源准备预编译包？(y/N): " confirm
+    [[ "$confirm" =~ ^[Yy]$ ]] || return
+    if python "$native_script" "$GCLI_CONFIG_DIR/wheels"; then
+        success "预编译包已准备；请再次运行 [检查新版预编译依赖（不停服）]。"
+    else
+        err "预编译包准备失败；当前后端和凭据未改动。"
+    fi
+    pause
 }
 
 gcli_python_smoke_test() {
