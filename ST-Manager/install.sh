@@ -79,6 +79,10 @@ validate_hardened_release() {
         RELEASE_VALIDATION_ERROR="缺少 core.sh 或 gcli2api 模块"
         return 1
     fi
+    if [[ ! -f "$root/modules/gcli2api/compat.py" ]]; then
+        RELEASE_VALIDATION_ERROR="缺少 agy2api 依赖与凭据迁移助手"
+        return 1
+    fi
     if ! grep -Fqx "ST_MANAGER_SECURITY_PROFILE=\"$ST_MANAGER_SECURITY_PROFILE\"" "$core_file"; then
         RELEASE_VALIDATION_ERROR="安全基线标识缺失或不受支持"
         return 1

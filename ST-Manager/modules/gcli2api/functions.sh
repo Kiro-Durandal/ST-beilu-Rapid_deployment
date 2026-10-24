@@ -2,14 +2,20 @@
 
 GCLI_DIR="$HOME/gcli2api"
 GCLI_REPO="https://github.com/su-kaka/gcli2api.git"
+# This URL redirects to the same GitHub repository, now named su-kaka/agy2api.
+# Keep the historical URL for installed managers' update-validation bridge.
 GCLI_UPSTREAM_REF="refs/heads/master"
 # 旧版管理器的一次性更新桥接标记；实际安装仍只使用下面的新提交。
 # GCLI_COMMIT="cdbaf37003a92de31b8a02512d43df3ed6de3411"
-GCLI_COMMIT="8048180939e499c35edce7999eb4b4ac2d2b8d1a"
-GCLI_WEB_SHA256="27201103ddd0a564d7be2838f9f3ab0c8253f6b048e46c39371991cabbe9246e"
-GCLI_REQUIREMENTS_SHA256="c54644f73c84e85263bb0d00630b3c06cef57535631a360756bd485ecffe30d6"
-GCLI_FASTAPI_VERSION="0.118.3"
-GCLI_PYDANTIC_VERSION="1.10.26"
+GCLI_COMMIT="c244c6b2a0cb818e3a510e66a6a6839cb95a3fb1"
+GCLI_WEB_SHA256="9791537193ec40a04df4a597d7610d26a827754db0398b7ad6070da51c07e80f"
+GCLI_REQUIREMENTS_FILE="requirements.txt"
+GCLI_REQUIREMENTS_SHA256="a8c3be7455984d53f915919c90c55f64d9b825eb60dd6b63be5d85bb172785c1"
+GCLI_FASTAPI_VERSION="0.162.0"
+GCLI_PYDANTIC_VERSION="2.14.1"
+GCLI_LEGACY_FASTAPI_VERSION="0.118.3"
+GCLI_LEGACY_PYDANTIC_VERSION="1.10.26"
+GCLI_COMPAT_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/compat.py"
 GCLI_CONFIG_DIR="$HOME/.config/st-manager"
 GCLI_ENV_FILE="$GCLI_CONFIG_DIR/gcli2api.env"
 GCLI_CREDS_DIR="$GCLI_DIR/creds"
@@ -424,7 +430,10 @@ gcli_proxy_log_diagnostic() {
 }
 
 gcli_proxy_write_nginx_config() {
-    local temp_conf
+    local temp_conf api_prefix_rewrite=""
+    if [[ -f "$GCLI_DIR/src/storage/database.py" ]]; then
+        api_prefix_rewrite='rewrite ^/antigravity/(.*)$ /$1 break;'
+    fi
     gcli_proxy_validate_settings || return 1
     mkdir -p "$GCLI_PROXY_ROOT/logs" "$GCLI_PROXY_ROOT/temp"
     chmod 700 "$GCLI_PROXY_ROOT" "$GCLI_PROXY_ROOT/logs" "$GCLI_PROXY_ROOT/temp"
@@ -471,6 +480,7 @@ http {
         }
 
         location ~ ^/antigravity/(v1|v1beta)/ {
+            $api_prefix_rewrite
             proxy_pass http://127.0.0.1:7861;
             proxy_http_version 1.1;
             proxy_set_header Host 127.0.0.1:7861;
@@ -906,56 +916,53 @@ gcli_verify_file() {
 }
 
 gcli_write_compat_requirements() {
-    local input_file="$1" output_file="$2" line package
+    local root
+    root=$(dirname "$1")
+    gcli_set_python_profile "$root" || return 1
+    GCLI_EXPECT_FASTAPI="$GCLI_ACTIVE_FASTAPI_VERSION" \
+    GCLI_EXPECT_PYDANTIC="$GCLI_ACTIVE_PYDANTIC_VERSION" \
+        python "$GCLI_COMPAT_SCRIPT" requirements "$root" "$2"
+}
 
-    : > "$output_file" || return 1
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        line="${line%$'\r'}"
-        package="${line%%[<>=!~ ]*}"
-        case "$package" in
-            # asyncpg has no usable Android wheel and compiling it can exhaust
-            # the memory of small Termux routers. ST-Manager deliberately uses
-            # gcli2api's default local SQLite backend instead of PostgreSQL.
-            fastapi|pydantic|asyncpg) continue ;;
-        esac
-        printf '%s\n' "$line" >> "$output_file" || return 1
-    done < "$input_file"
+gcli_set_python_profile() {
+    local profile
+    profile=$(python "$GCLI_COMPAT_SCRIPT" profile "$1") || return 1
+    if [[ "$profile" == "legacy" ]]; then
+        GCLI_ACTIVE_FASTAPI_VERSION="$GCLI_LEGACY_FASTAPI_VERSION"
+        GCLI_ACTIVE_PYDANTIC_VERSION="$GCLI_LEGACY_PYDANTIC_VERSION"
+    else
+        GCLI_ACTIVE_FASTAPI_VERSION="$GCLI_FASTAPI_VERSION"
+        GCLI_ACTIVE_PYDANTIC_VERSION="$GCLI_PYDANTIC_VERSION"
+    fi
+}
 
-    {
-        printf 'fastapi==%s\n' "$GCLI_FASTAPI_VERSION"
-        printf 'pydantic==%s\n' "$GCLI_PYDANTIC_VERSION"
-    } >> "$output_file"
+gcli_download_wheels() {
+    local source_dir="$1" wheel_dir="$2" extra_args=()
+    local requirements="$source_dir/requirements-st-manager.txt"
+    gcli_write_compat_requirements "$source_dir/requirements.txt" "$requirements" || return 1
+    mkdir -p "$wheel_dir" || return 1
+    # Optional user-supplied Android wheels; never add a third-party index.
+    [[ -d "$GCLI_CONFIG_DIR/wheels" ]] && extra_args=(--find-links "$GCLI_CONFIG_DIR/wheels")
+    log "仅下载预编译依赖；缺少 Android wheel 时立即停止，不在 F50 编译。"
+    if ! python -m pip download --only-binary=:all: --dest "$wheel_dir" \
+        "${extra_args[@]}" -r "$requirements"; then
+        err "预编译依赖检查失败（也可能是网络问题）；旧服务尚未停止。"
+        python -c 'import platform, sys; print("Python:", sys.version.split()[0], "CPU:", platform.machine())'
+        warn "新版需要 pydantic-core 和 greenlet 的匹配 Android 预编译包。"
+        warn "请勿去掉 --only-binary 限制；那会重新触发可能耗尽 F50 内存的编译。"
+        return 1
+    fi
 }
 
 gcli_python_smoke_test() {
     local python_bin="$GCLI_DIR/.venv/bin/python"
+    local extra_args=()
     [[ -x "$python_bin" ]] || return 1
-
-    (
-        cd "$GCLI_DIR" || exit 1
-        POSTGRESQL_URI='' \
-        GCLI_EXPECT_FASTAPI="$GCLI_FASTAPI_VERSION" \
-        GCLI_EXPECT_PYDANTIC="$GCLI_PYDANTIC_VERSION" \
-        "$python_bin" - <<'PY'
-import os
-
-import fastapi
-import pydantic
-
-expected_fastapi = os.environ["GCLI_EXPECT_FASTAPI"]
-expected_pydantic = os.environ["GCLI_EXPECT_PYDANTIC"]
-if fastapi.__version__ != expected_fastapi:
-    raise RuntimeError(
-        f"FastAPI version mismatch: {fastapi.__version__} != {expected_fastapi}"
-    )
-if pydantic.__version__ != expected_pydantic:
-    raise RuntimeError(
-        f"Pydantic version mismatch: {pydantic.__version__} != {expected_pydantic}"
-    )
-
-import web  # noqa: F401,E402
-PY
-    )
+    gcli_set_python_profile "$GCLI_DIR" || return 1
+    [[ "${1:-}" == "startup" ]] && extra_args=(--startup)
+    GCLI_EXPECT_FASTAPI="$GCLI_ACTIVE_FASTAPI_VERSION" \
+    GCLI_EXPECT_PYDANTIC="$GCLI_ACTIVE_PYDANTIC_VERSION" \
+        "$python_bin" "$GCLI_COMPAT_SCRIPT" smoke "$GCLI_DIR" "${extra_args[@]}"
 }
 
 gcli_stop_impl() {
@@ -1007,11 +1014,42 @@ gcli_resolve_upstream_head() {
     printf '%s\n' "$commit"
 }
 
+gcli_restore_running_state() {
+    local backend_running="$1" proxy_running="$2"
+    if [[ "$backend_running" == "true" ]]; then
+        gcli_start_impl || return 1
+    fi
+    if [[ "$proxy_running" == "true" ]]; then
+        gcli_proxy_start_impl || return 1
+    elif gcli_proxy_is_running; then
+        gcli_proxy_stop_impl || return 1
+    fi
+    return 0
+}
+
+gcli_rollback_install() {
+    local backup_dir="$1" stage_dir="$2" was_running="$3" proxy_running="$4"
+    gcli_stop_impl >/dev/null 2>&1 || true
+    if is_gcli_running || gcli_proxy_is_running; then
+        err "新服务未能安全停止；备份保留在 $backup_dir，未移动运行中的目录。"
+        return 1
+    fi
+    [[ ! -d "$GCLI_DIR" ]] || mv -- "$GCLI_DIR" "$stage_dir/failed" || return 1
+    if [[ -n "$backup_dir" ]]; then
+        mv -- "$backup_dir" "$GCLI_DIR" || return 1
+        gcli_restore_running_state "$was_running" "$proxy_running" || {
+            err "旧目录已恢复，但恢复运行状态失败；请在菜单中手动启动。"
+            return 1
+        }
+    fi
+    return 0
+}
+
 gcli_install_commit() {
     local target_commit="$1" expected_web_sha="${2:-}" expected_requirements_sha="${3:-}"
     local release_kind="${4:-reviewed}"
     local packages=() stage_dir source_dir backup_dir="" actual_commit was_running=false
-    local compat_requirements
+    local proxy_running=false requirements_file profile
     [[ "$target_commit" =~ ^[0-9a-f]{40}$ ]] || {
         err "gcli2api 目标提交格式无效。"
         pause
@@ -1032,6 +1070,11 @@ gcli_install_commit() {
     command -v python >/dev/null 2>&1 || packages+=(python)
     command -v openssl >/dev/null 2>&1 || packages+=(openssl-tool)
     command -v sha256sum >/dev/null 2>&1 || packages+=(coreutils)
+    if [[ "${5:-}" == "check" ]] && (( ${#packages[@]} > 0 )); then
+        err "依赖检查缺少命令，请先安装: ${packages[*]}。未修改当前服务。"
+        pause
+        return
+    fi
     if (( ${#packages[@]} > 0 )) && ! pkg install -y "${packages[@]}"; then
         err "依赖安装失败。"
         pause
@@ -1061,9 +1104,20 @@ gcli_install_commit() {
     fi
 
     actual_commit=$(git -C "$source_dir" rev-parse HEAD 2>/dev/null)
+    if ! profile=$(python "$GCLI_COMPAT_SCRIPT" profile "$source_dir"); then
+        rm -rf -- "$stage_dir"
+        err "无法识别上游布局；当前安装未改动。"
+        pause
+        return
+    fi
+    if [[ "$profile" == "legacy" ]]; then
+        requirements_file="requirements-termux.txt"
+    else
+        requirements_file="requirements.txt"
+    fi
     if [[ "$actual_commit" != "$target_commit" ]] ||
        [[ ! -f "$source_dir/web.py" || -L "$source_dir/web.py" ]] ||
-       [[ ! -f "$source_dir/requirements-termux.txt" || -L "$source_dir/requirements-termux.txt" ]] ||
+       [[ ! -f "$source_dir/$requirements_file" || -L "$source_dir/$requirements_file" ]] ||
        [[ -e "$source_dir/.gitmodules" ]] ||
        ! git -C "$source_dir" fsck --strict --no-dangling >/dev/null 2>&1; then
         rm -rf -- "$stage_dir"
@@ -1073,7 +1127,7 @@ gcli_install_commit() {
     fi
     if [[ -n "$expected_web_sha" ]] && {
         ! gcli_verify_file "$source_dir/web.py" "$expected_web_sha" ||
-        ! gcli_verify_file "$source_dir/requirements-termux.txt" "$expected_requirements_sha"
+        ! gcli_verify_file "$source_dir/$requirements_file" "$expected_requirements_sha"
     }; then
         rm -rf -- "$stage_dir"
         err "固定审核版的 SHA-256 校验失败；拒绝安装。"
@@ -1081,8 +1135,29 @@ gcli_install_commit() {
         return
     fi
 
+    # Download ALL wheels before any service stop or installation-directory move.
+    # Both this download and the offline install forbid source distributions.
+    if ! gcli_download_wheels "$source_dir" "$stage_dir/wheels"; then
+        rm -rf -- "$stage_dir"
+        pause
+        return
+    fi
+    if [[ "${5:-}" == "check" ]]; then
+        success "当前 Python/CPU 的全部预编译依赖可获取；服务与凭据未改动。"
+        rm -rf -- "$stage_dir"
+        pause
+        return
+    fi
+
     is_gcli_running && was_running=true
+    gcli_proxy_is_running && proxy_running=true
     gcli_stop_impl >/dev/null 2>&1 || true
+    if is_gcli_running || gcli_proxy_is_running; then
+        rm -rf -- "$stage_dir"
+        err "无法安全停止服务；已取消替换。"
+        pause
+        return
+    fi
     mkdir -p "$BACKUP_ROOT"
     chmod 700 "$BACKUP_ROOT"
 
@@ -1091,6 +1166,7 @@ gcli_install_commit() {
         log "备份现有 gcli2api 到 $backup_dir"
         if ! mv "$GCLI_DIR" "$backup_dir"; then
             rm -rf -- "$stage_dir"
+            gcli_restore_running_state "$was_running" "$proxy_running" || true
             err "无法创建备份；已取消安装。"
             pause
             return
@@ -1099,6 +1175,7 @@ gcli_install_commit() {
 
     if ! mv "$source_dir" "$GCLI_DIR"; then
         [[ -n "$backup_dir" && -d "$backup_dir" ]] && mv "$backup_dir" "$GCLI_DIR"
+        gcli_restore_running_state "$was_running" "$proxy_running" || true
         rm -rf -- "$stage_dir"
         err "安装文件替换失败，已恢复旧版本。"
         pause
@@ -1106,52 +1183,96 @@ gcli_install_commit() {
     fi
 
     if [[ -n "$backup_dir" && -d "$backup_dir/creds" ]]; then
-        cp -a "$backup_dir/creds" "$GCLI_CREDS_DIR"
+        if ! cp -a "$backup_dir/creds" "$GCLI_CREDS_DIR"; then
+            gcli_rollback_install "$backup_dir" "$stage_dir" "$was_running" "$proxy_running" || {
+                err "凭据复制失败；自动恢复未完成，请保留临时目录 $stage_dir。"
+                pause
+                return
+            }
+            rm -rf -- "$stage_dir"
+            err "凭据复制失败；已恢复旧版本。"
+            pause
+            return
+        fi
+    fi
+    if [[ -n "$backup_dir" && -d "$backup_dir/data" ]] && ! cp -a "$backup_dir/data" "$GCLI_DIR/data"; then
+        gcli_rollback_install "$backup_dir" "$stage_dir" "$was_running" "$proxy_running" || {
+            err "数据复制失败；请保留临时目录 $stage_dir 和备份 $backup_dir。"
+            pause
+            return
+        }
+        rm -rf -- "$stage_dir"
+        err "数据复制失败；已恢复旧版本。"
+        pause
+        return
     fi
     mkdir -p "$GCLI_CREDS_DIR"
     chmod 700 "$GCLI_CREDS_DIR"
 
-    echo -e "${BLUE}正在创建隔离的 Python 环境并安装依赖...${RESET}"
-    compat_requirements="$GCLI_DIR/requirements-termux-st-manager.txt"
+    echo -e "${BLUE}正在离线安装已下载的预编译依赖；不会启动编译器...${RESET}"
     if ! python -m venv "$GCLI_DIR/.venv" ||
-       ! gcli_write_compat_requirements \
-            "$GCLI_DIR/requirements-termux.txt" "$compat_requirements" ||
-       ! "$GCLI_DIR/.venv/bin/python" -m pip install -r "$compat_requirements" ||
+       ! "$GCLI_DIR/.venv/bin/python" -m pip install \
+            --no-index --only-binary=:all: --find-links "$stage_dir/wheels" \
+            -r "$GCLI_DIR/requirements-st-manager.txt" ||
        ! "$GCLI_DIR/.venv/bin/python" -m pip check ||
-       ! gcli_python_smoke_test; then
-        rm -rf -- "$GCLI_DIR"
-        if [[ -n "$backup_dir" && -d "$backup_dir" ]]; then
-            mv "$backup_dir" "$GCLI_DIR"
-        fi
+       ! gcli_python_smoke_test startup; then
+        gcli_rollback_install "$backup_dir" "$stage_dir" "$was_running" "$proxy_running" || {
+            err "安装验证失败；自动恢复未完成，请保留 $stage_dir 和 $backup_dir。"
+            pause
+            return
+        }
         rm -rf -- "$stage_dir"
-        err "Python 依赖安装失败，已恢复旧版本。"
+        err "Python 依赖或启动验证失败，已恢复旧版本。"
+        pause
+        return
+    fi
+
+    if { [[ "$profile" == "agy2api" ]] &&
+         ! "$GCLI_DIR/.venv/bin/python" "$GCLI_COMPAT_SCRIPT" migrate "$GCLI_CREDS_DIR/credentials.db"; } ||
+       ! gcli_ensure_stored_passwords; then
+        gcli_rollback_install "$backup_dir" "$stage_dir" "$was_running" "$proxy_running" || {
+            err "凭据迁移失败；自动恢复未完成，请保留 $stage_dir 和 $backup_dir。"
+            pause
+            return
+        }
+        rm -rf -- "$stage_dir"
+        err "凭据迁移或密码初始化失败，已恢复旧版本。"
+        pause
+        return
+    fi
+
+    if ! gcli_restore_running_state "$was_running" "$proxy_running"; then
+        gcli_rollback_install "$backup_dir" "$stage_dir" "$was_running" "$proxy_running" || {
+            err "新版本重启失败；自动恢复未完成，请保留 $stage_dir 和 $backup_dir。"
+            pause
+            return
+        }
+        rm -rf -- "$stage_dir"
+        err "新版本重启失败，已恢复旧版本。"
         pause
         return
     fi
     rm -rf -- "$stage_dir"
-
-    if ! gcli_ensure_stored_passwords; then
-        err "随机密码初始化失败；服务未启动。"
-        pause
-        return
-    fi
 
     if [[ "$release_kind" == "reviewed" ]]; then
         success "gcli2api 已安装为审核过的固定提交 ${target_commit:0:12}。"
     else
         success "gcli2api 已同步到上游提交 ${target_commit:0:12}。"
     fi
-    echo -e "${GREEN}Termux 兼容依赖: FastAPI $GCLI_FASTAPI_VERSION / Pydantic $GCLI_PYDANTIC_VERSION。${RESET}"
+    echo -e "${GREEN}Termux 兼容依赖: FastAPI $GCLI_ACTIVE_FASTAPI_VERSION / Pydantic $GCLI_ACTIVE_PYDANTIC_VERSION。${RESET}"
     echo -e "${GREEN}监听地址已强制设为 127.0.0.1，默认 pwd 已禁用。${RESET}"
-    if [[ "$was_running" == "true" ]]; then
-        gcli_start_impl || warn "更新完成，但自动重启失败。"
-    fi
     gcli_show_credentials
 }
 
 gcli_install() {
+    echo -e "${YELLOW}新版 agy2api 仅支持 Antigravity；GeminiCLI 已由上游移除。${RESET}"
     gcli_install_commit \
         "$GCLI_COMMIT" "$GCLI_WEB_SHA256" "$GCLI_REQUIREMENTS_SHA256" reviewed
+}
+
+gcli_check_compatibility() {
+    gcli_install_commit \
+        "$GCLI_COMMIT" "$GCLI_WEB_SHA256" "$GCLI_REQUIREMENTS_SHA256" reviewed check
 }
 
 gcli_update_upstream() {

@@ -14,23 +14,25 @@ if grep -R -n -F -e 'pkill -f' -e 'nodejs-lts' -e 'master/termux-install.sh' \
     exit 1
 fi
 
-grep -Fq 'GCLI_COMMIT="8048180939e499c35edce7999eb4b4ac2d2b8d1a"' \
+grep -Fq 'GCLI_COMMIT="c244c6b2a0cb818e3a510e66a6a6839cb95a3fb1"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
-grep -Fq 'GCLI_WEB_SHA256="27201103ddd0a564d7be2838f9f3ab0c8253f6b048e46c39371991cabbe9246e"' \
+grep -Fq 'GCLI_WEB_SHA256="9791537193ec40a04df4a597d7610d26a827754db0398b7ad6070da51c07e80f"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
-grep -Fq 'GCLI_REQUIREMENTS_SHA256="c54644f73c84e85263bb0d00630b3c06cef57535631a360756bd485ecffe30d6"' \
+grep -Fq 'GCLI_REQUIREMENTS_SHA256="a8c3be7455984d53f915919c90c55f64d9b825eb60dd6b63be5d85bb172785c1"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'GCLI_UPSTREAM_REF="refs/heads/master"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
-grep -Fq 'GCLI_FASTAPI_VERSION="0.118.3"' \
+grep -Fq 'GCLI_FASTAPI_VERSION="0.162.0"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
-grep -Fq 'GCLI_PYDANTIC_VERSION="1.10.26"' \
+grep -Fq 'GCLI_PYDANTIC_VERSION="2.14.1"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'gcli_write_compat_requirements' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'gcli_python_smoke_test' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
-grep -Fq 'fastapi|pydantic|asyncpg) continue' \
+grep -Fq 'pip download --only-binary=:all:' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq -- '--no-index --only-binary=:all:' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'POSTGRESQL_URI=' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
@@ -132,6 +134,7 @@ grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
     GCLI_PROXY_CONF="$GCLI_PROXY_ROOT/nginx.conf"
     GCLI_PROXY_ERROR_LOG="$GCLI_PROXY_ROOT/logs/error.log"
     GCLI_PROXY_PID_FILE="$GCLI_PROXY_ROOT/logs/nginx.pid"
+    GCLI_DIR="$proxy_test_root/backend"
     mkdir -p "$GCLI_CONFIG_DIR"
 
     # Existing v1.4 settings migrate to API-only with the old startup intent.
@@ -163,6 +166,14 @@ grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
     grep -Fq 'location = /logs/stream' "$GCLI_PROXY_CONF"
     grep -Fq 'proxy_set_header Upgrade $http_upgrade;' "$GCLI_PROXY_CONF"
     grep -Fq 'proxy_set_header Connection "upgrade";' "$GCLI_PROXY_CONF"
+
+    # Modern upstream moved Antigravity APIs to /v1 and /v1beta.
+    mkdir -p "$GCLI_DIR/src/storage"
+    : > "$GCLI_DIR/src/storage/database.py"
+    GCLI_PROXY_MODE="api"
+    gcli_proxy_write_nginx_config
+    grep -Fq 'rewrite ^/antigravity/(.*)$ /$1 break;' "$GCLI_PROXY_CONF"
+    grep -Fq 'return 403;' "$GCLI_PROXY_CONF"
 )
 
 (

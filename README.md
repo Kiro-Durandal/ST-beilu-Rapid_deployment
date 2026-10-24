@@ -4,7 +4,7 @@ ST-Manager 是面向 Android Termux 的 SillyTavern 与 gcli2api 部署、启动
 
 - 原作者：贝露凛倾
 - 安全加固维护：Kiro-Durandal Fork
-- 版本：v1.7
+- 版本：v1.8
 
 > 仅供学习与研究。使用者应自行遵守相关服务条款、账号政策和当地法律。
 
@@ -28,7 +28,7 @@ st-menu
 
 首页提供“一键启动全部组件”和“一键停止全部组件”。首页及各级数字菜单采用单键操作，按下数字后立即执行，不需要再按 Enter；代理地址、危险操作确认等文本输入仍需按 Enter。
 
-gcli2api 默认仍只监听 `127.0.0.1:7861`。需要让 F50 或其他 Termux 设备为局域网提供服务时，可在“gcli2api 管理 → LAN API 共享（Nginx）”中启用轻量反向代理。默认绑定 `192.168.0.1:7861`、仅允许 `192.168.0.0/24`；绑定 IP、端口和允许网段均可修改。共享支持“仅 API”和“完整转发”两种模式，并可独立设置是否跟随 gcli2api 自动启动。完整转发同时支持控制面板实时日志所用的 `/logs/stream` WebSocket，无需开放第二个端口。
+后端默认仍只监听 `127.0.0.1:7861`。需要让 F50 或其他 Termux 设备为局域网提供服务时，可在“gcli2api 管理 → LAN API 共享（Nginx）”中启用轻量反向代理。默认绑定 `192.168.0.1:7861`、仅允许 `192.168.0.0/24`；绑定 IP、端口和允许网段均可修改。共享支持“仅 API”和“完整转发”两种模式，并可独立设置是否跟随后端自动启动。旧 gcli2api 的 `/logs/stream` WebSocket 仍可转发；新 agy2api 已由上游移除此实时控制台页面，改用受密码保护的请求统计日志页面。
 
 “系统管理 → 开机自启动”可以生成由 Termux:Boot 执行的最小启动脚本，并选择仅启动 gcli2api、仅启动 SillyTavern 或同时启动两者。若启动组合包含 gcli2api，Nginx 会继续服从 LAN 共享中的“跟随 gcli2api 启动”开关；管理器会在启动后验证 Nginx 状态，首次失败时等待 LAN 接口并重试一次，最终结果写入开机日志。
 
@@ -40,11 +40,11 @@ gcli2api 默认仍只监听 `127.0.0.1:7861`。需要让 F50 或其他 Termux �
 - 首次安装生成独立的 48 位十六进制 API 密码和面板密码，不再使用默认 `pwd`。
 - 首次生成的密码种子保存到 `~/.config/st-manager/gcli2api.env`，权限设为 `600`；配置文件按白名单解析，不使用 `source`。实际密码写入 gcli2api 的 SQLite 配置后不再作为环境变量注入，因此控制面板可以修改并持久保存 API 密码、面板密码和兼容用通用密码。
 - 启动时会重建属于 ST-Manager 的 PM2 记录并清除旧的 `API_PASSWORD`、`PANEL_PASSWORD` 与 `PASSWORD` 环境变量，避免上游把密码输入框锁成只读；随机种子只在 SQLite 尚无对应密码时使用，不会覆盖之后在控制面板保存的值。
-- 固定到已审核提交 `87f56c8cb088f25c58d947d54424cc889ae7c9aa`。
-- 安装前核对提交 ID，并对 `web.py` 和 `requirements-termux.txt` 做 SHA-256 校验；失败时拒绝安装。
-- 不直接采用上游互相冲突的 Termux 依赖组合；安装时生成本地依赖清单，固定 `FastAPI 0.118.3` 与 `Pydantic 1.10.26`，兼容 Termux 的 Python 3.14 且避免 Pydantic 2 的原生扩展编译问题。
-- F50/Termux 使用上游默认的本地 SQLite 存储，并排除只供 PostgreSQL 模式使用、需要在 Android 上现场编译的 `asyncpg`，避免低内存设备在 `Building wheel for asyncpg` 阶段被系统杀死。此安装配置不提供 PostgreSQL 存储模式。
-- 依赖安装后运行 `pip check` 并导入完整 `web` 应用；任一步失败都会恢复更新前的安装。
+- 固定到上游 agy2api 提交 `c244c6b2a0cb818e3a510e66a6a6839cb95a3fb1`（原项目 gcli2api 已改名）。新版只保留 Antigravity 通道；GeminiCLI 通道已被上游移除，Gemini 格式的 API 本身仍受支持。
+- 安装前核对提交 ID，并对 `web.py` 和 `requirements.txt` 做 SHA-256 校验；失败时拒绝安装。保留旧 GitHub URL 作为同一仓库的重定向别名，兼容已安装管理器的更新校验。
+- 新版依赖固定 `FastAPI 0.162.0`、`Pydantic 2.14.1`、`SQLAlchemy 2.1.6`、`greenlet 3.5.6`；启动旧版安装时仍按其原有 `FastAPI 0.118.3` / `Pydantic 1.10.26` 检查，因此更新管理器本身不会强制升级正在使用的旧后端。
+- F50/Termux 使用本地 SQLite，依赖清单排除 PostgreSQL 专用的 `asyncpg`。全部依赖必须通过 `--only-binary=:all:` 下载成功后才停止旧服务，安装也只从已下载 wheel 离线进行；不会回退到 Rust/C/C++ 源码编译。
+- 依赖安装后运行 `pip check`、完整应用导入与临时 SQLite 启动测试。测试不打开真实凭据库，也不调用 Google。安装、迁移或重启失败时尝试恢复旧目录及运行状态。
 - 默认“安装/更新”使用经过本 Fork 审核并锁定提交与 SHA-256 的版本；“检查/同步上游最新版（高级）”可按需读取上游 `master` 的精确提交号，经用户输入 `UPDATE` 明确确认后再暂存安装。高级同步仍执行 Git 对象检查、依赖兼容处理、完整应用导入测试和失败回滚，但候选代码没有经过本 Fork 人工审核。
 - 可选安装独立 Nginx 反向代理。“仅 API”模式只转发 `/v1/`、`/v1beta/`、`/antigravity/v1/`、`/antigravity/v1beta/` 和 `/keepalive`，控制面板、凭据、日志及静态页面对 LAN 返回 `403`；“完整转发”模式会同时开放受随机面板密码保护的控制面板和凭证管理，方便无本机浏览器的 F50 配置凭证。
 - 当前运行状态、共享模式和“跟随 gcli2api 启动”开关相互独立；新配置默认关闭跟随启动，旧版 `ENABLED` 设置会安全迁移以保持原行为。
@@ -52,7 +52,24 @@ gcli2api 默认仍只监听 `127.0.0.1:7861`。需要让 F50 或其他 Termux �
 - 不再下载并直接执行上游 `master/termux-install.sh`，因此不会替用户改写 Termux 软件源，也不会执行上游的远程硬重置和自动启动逻辑。
 - 更新前完整保留旧目录；凭据目录会复制到新版本。
 
-> Python 包仍由 PyPI/配置的软件源安装。上游 `requirements-termux.txt` 没有为全部传递依赖提供哈希，因此这部分供应链风险只能降低，不能完全消除。
+> Python 包仍由 PyPI/配置的软件源下载。上游依赖没有为全部传递依赖提供哈希，因此这部分供应链风险只能降低，不能完全消除。禁止现场编译也不等于已经验证 F50 的整机内存占用和稳定性。
+
+#### F50 迁移到 agy2api
+
+先选择 `gcli2api 管理 → 检查新版预编译依赖（不停服）`。该操作只下载并解析依赖，不停止旧服务、不移动安装目录、不修改凭据。缺少匹配 Python/CPU 的 wheel 或网络失败时会退出，并显示当前 Python 和 CPU 信息。
+
+截至 2026-10-24，PyPI 的 `pydantic-core 2.50.1` 与 `greenlet 3.5.6` 未列出 Android wheel；Android ARM64 / Python 3.14 的交叉下载检查也未找到匹配的 Pydantic Core 包。因此默认 F50 环境很可能被依赖检查拦截，不能把桌面运行测试通过视为 F50 已支持。可选地把自己信任且匹配设备的预编译 wheel 放到 `~/.config/st-manager/wheels/`；管理器不会自动添加第三方软件源。缺包时请继续使用旧后端，不要删除 `--only-binary` 限制来强行编译。
+
+依赖检查通过后，再执行“安装/更新（固定审核版本）”：
+
+1. 下载锁定提交和全部预编译依赖。
+2. 停止旧服务，将完整旧目录移动到 `~/ST-Manager-backups/`。
+3. 复制凭据和数据，在副本上把旧 Antigravity 表转换为新 email 键结构，保留旧表档案、密码、禁用状态、冷却与 tier；原备份不修改。
+4. 检查迁移和启动，失败时恢复旧版本。缺少有效邮箱/refresh token、重复邮箱或不认识的表结构会中止迁移，避免静默覆盖账号。
+
+安装目录继续使用 `~/gcli2api`，现有启动、开机自启动和 LAN 共享设置沿用。新后端的本机 API 地址为 `http://127.0.0.1:7861/v1`；使用旧本机 `/antigravity/v1` 地址的客户端需改成 `/v1`。Nginx 在识别到新版后，会为 LAN 请求兼容转写旧的 `/antigravity/v1` 和 `/antigravity/v1beta` 路径。
+
+HTTP 正文捕获功能未增加；新上游的 `request_log_enabled` 在首次迁移时保持关闭。旧 GeminiCLI 凭据保留在数据库与完整备份中，但新上游无法使用它们。
 
 ### ST-Manager
 

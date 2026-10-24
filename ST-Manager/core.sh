@@ -244,6 +244,10 @@ validate_hardened_release() {
         RELEASE_VALIDATION_ERROR="缺少 core.sh 或 gcli2api 模块"
         return 1
     fi
+    if [[ ! -f "$root/modules/gcli2api/compat.py" ]]; then
+        RELEASE_VALIDATION_ERROR="缺少 agy2api 依赖与凭据迁移助手"
+        return 1
+    fi
     if ! grep -Fqx "ST_MANAGER_SECURITY_PROFILE=\"$ST_MANAGER_SECURITY_PROFILE\"" "$core_file"; then
         RELEASE_VALIDATION_ERROR="安全基线标识缺失或不受支持"
         return 1
@@ -796,7 +800,7 @@ stop_all_services() {
 show_banner() {
     clear
     echo -e "${BLUE}==============================================${RESET}"
-    echo -e "${GREEN}        与你之歌 v1.7（安全加固版）       ${RESET}"
+    echo -e "${GREEN}        与你之歌 v1.8（安全加固版）       ${RESET}"
     echo -e "${BLUE}==============================================${RESET}"
     echo -e "仅供学习与研究；请遵守相关服务条款和当地法律。"
     echo -e "${BLUE}==============================================${RESET}"
