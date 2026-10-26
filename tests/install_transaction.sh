@@ -45,7 +45,7 @@ run_case() (
             printf 'agy2api\n'
         elif [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
             mkdir -p "$3/bin"
-            printf '#!/bin/sh\nif [[ "$2" == "migrate" ]]; then : > "$ST_MANAGER_TRANSACTION_MARKER/migration"; [[ "$ST_MANAGER_TRANSACTION_MODE" != "migration-failure" ]]; exit $?; fi\n: > "$ST_MANAGER_TRANSACTION_MARKER/pip"\nexit 0\n' > "$3/bin/python"
+            printf '#!/bin/sh\nif [ "$2" = "migrate" ]; then : > "$ST_MANAGER_TRANSACTION_MARKER/migration"; [ "$ST_MANAGER_TRANSACTION_MODE" != "migration-failure" ]; exit $?; fi\n: > "$ST_MANAGER_TRANSACTION_MARKER/pip"\nexit 0\n' > "$3/bin/python"
             chmod +x "$3/bin/python"
         fi
         return 0
@@ -115,12 +115,12 @@ run_native_case() (
         if [[ "$2" == "venv" ]]; then
             mkdir -p "$3/bin"
             printf '%s\n' '#!/bin/sh' \
-                'if [[ "$1" == "-m" ]]; then' \
+                'if [ "$1" = "-m" ]; then' \
                 '  printf "install\n" >> "$ST_NATIVE_TEST_MARKER"' \
-                '  [[ "$ST_NATIVE_TEST_MODE" != "pip-failure" ]]' \
+                '  [ "$ST_NATIVE_TEST_MODE" != "pip-failure" ]' \
                 'else' \
                 '  printf "import\n" >> "$ST_NATIVE_TEST_MARKER"' \
-                '  [[ "$ST_NATIVE_TEST_MODE" != "import-failure" ]]' \
+                '  [ "$ST_NATIVE_TEST_MODE" != "import-failure" ]' \
                 'fi' > "$3/bin/python"
             chmod +x "$3/bin/python"
         fi
