@@ -20,7 +20,7 @@ grep -Fqx 'AGY_REPO="https://github.com/su-kaka/agy2api.git"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'remote add origin "$AGY_INSTALL_REPO"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
-grep -Fq 'GCLI_COMMIT="7aee73d3f015f28d233323adf46ba985ec7a4927"' \
+grep -Fq 'GCLI_COMMIT="1b6d633df9e04792b84a8ced154db33cfdbbd188"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'GCLI_WEB_SHA256="9791537193ec40a04df4a597d7610d26a827754db0398b7ad6070da51c07e80f"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
