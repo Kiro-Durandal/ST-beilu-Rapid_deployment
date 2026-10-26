@@ -40,7 +40,7 @@ st-menu
 - 首次安装生成独立的 48 位十六进制 API 密码和面板密码，不再使用默认 `pwd`。
 - 首次生成的密码种子保存到 `~/.config/st-manager/agy2api.env`，权限设为 `600`；配置文件按白名单解析，不使用 `source`。实际密码写入 agy2api 的 SQLite 配置后不再作为环境变量注入，因此控制面板可以修改并持久保存 API 密码、面板密码和兼容用通用密码。
 - 启动时会重建属于 ST-Manager 的 PM2 记录并清除旧的 `API_PASSWORD`、`PANEL_PASSWORD` 与 `PASSWORD` 环境变量，避免上游把密码输入框锁成只读；随机种子只在 SQLite 尚无对应密码时使用，不会覆盖之后在控制面板保存的值。
-- 固定到维护 Fork 的 agy2api 提交 `1b6d633df9e04792b84a8ced154db33cfdbbd188`，其中加强了 Chat Completions 的 system、developer 和工具消息转换。新版只保留 Antigravity 通道；GeminiCLI 通道已被上游移除，Gemini 格式的 API 本身仍受支持。
+- 固定到维护 Fork 的 agy2api 提交 `857d80418f658ccfc2dca132bff93cf89f22cc18`，其中加强了 Chat Completions 的 system、developer 和工具消息转换，并沿用上游对畸形工具参数及不完整历史的容错处理。新版只保留 Antigravity 通道；GeminiCLI 通道已被上游移除，Gemini 格式的 API 本身仍受支持。
 - 安装前核对提交 ID，并对 `web.py` 和 `requirements.txt` 做 SHA-256 校验；失败时拒绝安装。实际下载与高级同步使用 `https://github.com/Kiro-Durandal/agy2api.git`。源码中的 `modules/gcli2api/`、`gcli_*`、`GCLI_*` 和旧 URL 别名保留为升级兼容接口，旧版更新器仍可验证本版本；旧自启动配置中的 `gcli` 值也继续有效。
 - 新版依赖固定 `FastAPI 0.162.0`、`Pydantic 2.14.1`、`SQLAlchemy 2.1.6`、`greenlet 3.5.6`；启动旧版安装时仍按其原有 `FastAPI 0.118.3` / `Pydantic 1.10.26` 检查，因此更新管理器本身不会强制升级正在使用的旧后端。
 - F50/Termux 使用本地 SQLite，依赖清单排除 PostgreSQL 专用的 `asyncpg`。全部依赖必须通过 `--only-binary=:all:` 下载成功后才停止旧服务，安装也只从已下载 wheel 离线进行；不会回退到 Rust/C/C++ 源码编译。
