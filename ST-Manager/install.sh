@@ -88,6 +88,7 @@ validate_hardened_release() {
         return 1
     fi
     if ! grep -Fqx 'AGY_REPO="https://github.com/su-kaka/agy2api.git"' "$gcli_file" ||
+       ! grep -Fqx 'AGY_INSTALL_REPO="https://github.com/Kiro-Durandal/agy2api.git"' "$gcli_file" ||
        ! grep -Eq '^GCLI_COMMIT="[0-9a-f]{40}"$' "$gcli_file"; then
         RELEASE_VALIDATION_ERROR="agy2api 来源或提交锁定格式无效"
         return 1

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 
+# Keep this literal alias for installed v1.9 managers validating self-updates.
 AGY_REPO="https://github.com/su-kaka/agy2api.git"
-# Legacy identifiers below are an upgrade ABI, not the active upstream URL.
+# The reviewed install and advanced update both use the maintained fork.
+AGY_INSTALL_REPO="https://github.com/Kiro-Durandal/agy2api.git"
 # Installed pre-v1.9 manager updaters still validate this literal alias.
 GCLI_REPO="https://github.com/su-kaka/gcli2api.git"
 GCLI_UPSTREAM_REF="refs/heads/master"
 # 旧版管理器的一次性更新桥接标记；实际安装仍只使用下面的新提交。
 # GCLI_COMMIT="cdbaf37003a92de31b8a02512d43df3ed6de3411"
-GCLI_COMMIT="c244c6b2a0cb818e3a510e66a6a6839cb95a3fb1"
+GCLI_COMMIT="1b6d633df9e04792b84a8ced154db33cfdbbd188"
 GCLI_WEB_SHA256="9791537193ec40a04df4a597d7610d26a827754db0398b7ad6070da51c07e80f"
 GCLI_REQUIREMENTS_FILE="requirements.txt"
 GCLI_REQUIREMENTS_SHA256="a8c3be7455984d53f915919c90c55f64d9b825eb60dd6b63be5d85bb172785c1"
@@ -1070,7 +1072,7 @@ gcli_installed_commit() {
 
 gcli_resolve_upstream_head() {
     local output commit ref
-    output=$(git ls-remote --exit-code "$AGY_REPO" "$GCLI_UPSTREAM_REF" 2>/dev/null) || return 1
+    output=$(git ls-remote --exit-code "$AGY_INSTALL_REPO" "$GCLI_UPSTREAM_REF" 2>/dev/null) || return 1
     read -r commit ref <<< "$output"
     [[ "$commit" =~ ^[0-9a-f]{40}$ && "$ref" == "$GCLI_UPSTREAM_REF" ]] || return 1
     printf '%s\n' "$commit"
@@ -1157,7 +1159,7 @@ gcli_install_commit() {
         echo -e "${BLUE}正在获取已确认的上游提交 ${target_commit:0:12}...${RESET}"
     fi
     if ! git init -q "$source_dir" ||
-       ! git -C "$source_dir" remote add origin "$AGY_REPO" ||
+       ! git -C "$source_dir" remote add origin "$AGY_INSTALL_REPO" ||
        ! git -C "$source_dir" fetch --depth 1 origin "$target_commit" ||
        ! git -C "$source_dir" checkout --detach FETCH_HEAD; then
         rm -rf -- "$stage_dir"
@@ -1367,9 +1369,9 @@ gcli_update_upstream() {
     installed_commit=$(gcli_installed_commit 2>/dev/null || true)
     echo -e "当前版本: ${GREEN}${installed_commit:-未安装}${RESET}"
     echo -e "上游版本: ${GREEN}$latest_commit${RESET}"
-    echo -e "提交页面: https://github.com/su-kaka/agy2api/commit/$latest_commit"
+    echo -e "提交页面: ${AGY_INSTALL_REPO%.git}/commit/$latest_commit"
     if [[ -n "$installed_commit" ]]; then
-        echo -e "变更对比: https://github.com/su-kaka/agy2api/compare/$installed_commit...$latest_commit"
+        echo -e "变更对比: ${AGY_INSTALL_REPO%.git}/compare/$installed_commit...$latest_commit"
     fi
     if [[ "$installed_commit" == "$latest_commit" ]]; then
         success "当前已经是上游最新版。"
