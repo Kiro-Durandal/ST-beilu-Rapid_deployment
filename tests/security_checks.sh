@@ -14,7 +14,13 @@ if grep -R -n -F -e 'pkill -f' -e 'nodejs-lts' -e 'master/termux-install.sh' \
     exit 1
 fi
 
-grep -Fq 'GCLI_COMMIT="c244c6b2a0cb818e3a510e66a6a6839cb95a3fb1"' \
+grep -Fq 'AGY_INSTALL_REPO="https://github.com/Kiro-Durandal/agy2api.git"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fqx 'AGY_REPO="https://github.com/su-kaka/agy2api.git"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'remote add origin "$AGY_INSTALL_REPO"' \
+    "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
+grep -Fq 'GCLI_COMMIT="7aee73d3f015f28d233323adf46ba985ec7a4927"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'GCLI_WEB_SHA256="9791537193ec40a04df4a597d7610d26a827754db0398b7ad6070da51c07e80f"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
@@ -87,7 +93,7 @@ grep -Fq 'gcli_lan_proxy_menu=LAN API 共享（Nginx）' \
     "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
 grep -Fq 'gcli_maintenance_menu=更新与维护' \
     "$ROOT/ST-Manager/modules/gcli2api/menu.conf"
-grep -Fq 'git ls-remote --exit-code "$AGY_REPO" "$GCLI_UPSTREAM_REF"' \
+grep -Fq 'git ls-remote --exit-code "$AGY_INSTALL_REPO" "$GCLI_UPSTREAM_REF"' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
 grep -Fq 'git -C "$source_dir" fsck --strict --no-dangling' \
     "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
@@ -185,7 +191,7 @@ grep -Fq '2>> "$GCLI_PROXY_ERROR_LOG"' \
     source "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
     expected_commit="0123456789abcdef0123456789abcdef01234567"
     git() {
-        [[ "$*" == "ls-remote --exit-code $AGY_REPO $GCLI_UPSTREAM_REF" ]] || return 1
+        [[ "$*" == "ls-remote --exit-code $AGY_INSTALL_REPO $GCLI_UPSTREAM_REF" ]] || return 1
         printf '%s\t%s\n' "$expected_commit" "$GCLI_UPSTREAM_REF"
     }
     [[ "$(gcli_resolve_upstream_head)" == "$expected_commit" ]]

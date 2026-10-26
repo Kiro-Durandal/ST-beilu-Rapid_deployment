@@ -25,6 +25,7 @@ run_path_case() (
     [[ "$1" != "conflict" ]] || mkdir -p "$HOME/agy2api"
     source "$ROOT/ST-Manager/modules/gcli2api/functions.sh"
     [[ "$AGY_REPO" == "https://github.com/su-kaka/agy2api.git" ]]
+    [[ "$AGY_INSTALL_REPO" == "https://github.com/Kiro-Durandal/agy2api.git" ]]
     if [[ "$1" == "legacy" ]]; then
         [[ "$GCLI_DIR" == "$HOME/gcli2api" && "$GCLI_STORAGE_NAME" == "gcli2api" ]]
         [[ "$GCLI_PID_FILE" == "$HOME/.config/st-manager/gcli2api.pid" ]]
